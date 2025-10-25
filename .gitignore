@@ -1,0 +1,69 @@
+# Environment
+.env
+.env.*       # e.g. .env.local, .env.dev
+!.env.example
+!.env.sample
+!.env.template
+.envrc
+.python-version
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# Python packaging/build
+build/
+dist/
+site/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# Test & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Type checkers / linters
+.mypy_cache/
+.pytype/
+.pyre/
+.ruff_cache/
+
+# Logs and runtime data
+logs/
+*.log
+*.pid
+*.sqlite3
+*.db
+
+# Lua artifacts
+*.luac
+luac.out
+lua_modules/
+.luarocks/
+luacov.stats.out
+luacov.report.out
+.rocks/
+
+# Optional Node/frontend (kept from your current file)
+node_modules/
+dist/
+build/
+.cache/
+npm-debug.log*
+yarn-error.log*
+
+# Editors/OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
