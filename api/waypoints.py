@@ -1,10 +1,10 @@
 from typing import Dict, Any, List, Optional
 from typing import TYPE_CHECKING
+from data.enums import WaypointTraitType
 
 if TYPE_CHECKING:
     from api.client import ApiClient
-
-
+    
 class WaypointsAPI:
     """Waypoints endpoints."""
 
@@ -39,4 +39,16 @@ class WaypointsAPI:
             return payload.get("data")
         return None
 
-
+    def find_waypoints_by_trait(self, system_symbol: str, trait: WaypointTraitType) -> List[Dict[str, Any]]:
+        """
+        Find waypoints by trait.
+        GET /v2/systems/{systemSymbol}/waypoints?traits={trait}
+        Returns the 'data' array from the response.
+        """
+        query = {"traits": trait.value}
+        payload = self.client.http.get_json(
+            f"systems/{system_symbol}/waypoints",
+            self.client.agent_key,
+            params=query,
+        )
+        return payload.get("data", []) if isinstance(payload, dict) else []

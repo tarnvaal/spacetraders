@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-
 @dataclass
 class WaypointTrait:
     symbol: str
@@ -21,7 +20,7 @@ class WaypointChart:
 
 
 @dataclass
-class Waypoint:
+class Waypoints:
     symbol: str
     systemSymbol: str
     type: str
@@ -35,8 +34,8 @@ class Waypoint:
     isUnderConstruction: Optional[bool] = None
 
     @staticmethod
-    def from_detail_dict(d: dict) -> "Waypoint":
-        return Waypoint(
+    def from_detail_dict(d: dict) -> "Waypoints":
+        return Waypoints(
             symbol=d["symbol"],
             systemSymbol=d.get("systemSymbol", ""),
             type=d["type"],

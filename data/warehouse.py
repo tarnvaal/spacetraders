@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from data.models.system import System, SystemWaypointRef
-from data.models.waypoint import Waypoint
+from data.models.waypoints import Waypoints
 
 @dataclass
 class Warehouse():
@@ -16,7 +16,7 @@ class Warehouse():
     # Indexed storage for SpaceTraders systems (per-instance)
     systems_by_symbol: Dict[str, System] = field(default_factory=dict)
     waypoints_by_symbol: Dict[str, SystemWaypointRef] = field(default_factory=dict)
-    full_waypoints_by_symbol: Dict[str, Waypoint] = field(default_factory=dict)
+    full_waypoints_by_symbol: Dict[str, Waypoints] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.sectorsKnown is None:
@@ -60,8 +60,8 @@ class Warehouse():
         return len(self.systems_by_symbol)
 
     # Waypoint detail upserts/lookups
-    def upsert_waypoint_detail(self, payload: Dict[str, Any]) -> Waypoint:
-        w = Waypoint.from_detail_dict(payload)
+    def upsert_waypoint_detail(self, payload: Dict[str, Any]) -> Waypoints:
+        w = Waypoints.from_detail_dict(payload)
         self.full_waypoints_by_symbol[w.symbol] = w
         # Refresh ref index with any new info
         ref = self.waypoints_by_symbol.get(w.symbol)
@@ -85,13 +85,13 @@ class Warehouse():
             ref.orbits = w.orbits
         return w
 
-    def upsert_waypoints_detail(self, payloads: List[Dict[str, Any]]) -> List[Waypoint]:
+    def upsert_waypoints_detail(self, payloads: List[Dict[str, Any]]) -> List[Waypoints]:
         return [self.upsert_waypoint_detail(p) for p in payloads]
 
     def get_waypoint_ref(self, symbol: str) -> Optional[SystemWaypointRef]:
         return self.waypoints_by_symbol.get(symbol)
 
-    def get_waypoint(self, symbol: str) -> Optional[Waypoint]:
+    def get_waypoint(self, symbol: str) -> Optional[Waypoints]:
         return self.full_waypoints_by_symbol.get(symbol)
 
     def get_waypoints_in_system(self, system_symbol: str) -> List[SystemWaypointRef]:

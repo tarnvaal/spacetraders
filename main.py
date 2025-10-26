@@ -3,6 +3,8 @@ import os
 
 from api.client import ApiClient
 from data.warehouse import Warehouse
+from data.enums import WaypointTraitType
+
 # load environment variables
 load_dotenv()
 
@@ -30,5 +32,16 @@ if dataWarehouse.headquarters and "-" in dataWarehouse.headquarters:
     if details:
         dataWarehouse.upsert_waypoints_detail(details)
         print(f"Populated {len(details)} waypoints for system {hq_system}")
-    
-    
+
+print("Finding shipyards...")
+shipyards = client.waypoints.find_waypoints_by_trait(hq_system, WaypointTraitType.SHIPYARD)
+dataWarehouse.upsert_waypoints_detail(shipyards)
+
+for waypoint in dataWarehouse.full_waypoints_by_symbol.values():
+    if any(t.symbol == WaypointTraitType.SHIPYARD.value for t in waypoint.traits):
+        print(f"Shipyard: {waypoint.symbol}")
+        print(f"    Type: {waypoint.type}")
+        print(f"    Coords: {waypoint.x}, {waypoint.y}")
+        
+
+
