@@ -89,3 +89,20 @@ def spacetraders_get(url: str, **kwargs) -> requests.Response:
     elif resp.status_code == 502:
         _sleep_with_jitter(3.0)
     return resp
+
+BASE_URL = "https://api.spacetraders.io/v2"
+
+
+def auth_headers(agent_key: str) -> dict:
+    return {"Authorization": f"Bearer {agent_key}"}
+
+
+def get_json(path: str, agent_key: str, params: dict | None = None):
+    """
+    JSON GET helper using rate-limited session + retries.
+    path: path relative to BASE_URL (no leading slash)
+    returns parsed JSON payload (dict or list typically)
+    """
+    url = f"{BASE_URL}/{path}"
+    resp = spacetraders_get(url, headers=auth_headers(agent_key), params=params)
+    return resp.json()
