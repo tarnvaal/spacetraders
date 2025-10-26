@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.*       # e.g. .env.local, .env.dev
+.env.venv
 !.env.example
 !.env.sample
 !.env.template
