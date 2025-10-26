@@ -4,7 +4,7 @@ from data.models.system import System, SystemWaypointRef
 from data.models.waypoint import Waypoint
 
 @dataclass
-class warehouse():
+class Warehouse():
     accountId: str = ""
     symbol: str = ""
     headquarters: str = ""

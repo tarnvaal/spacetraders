@@ -1,8 +1,14 @@
-from api.handle_requests import get_json
+from typing import TYPE_CHECKING
 
-class systems():
-    def __init__(self, agent_key: str):
-        self.agent_key = agent_key
+if TYPE_CHECKING:
+    from api.client import ApiClient
 
-    def get(self):
-        return get_json("systems", self.agent_key)
+class SystemsAPI:
+    """Systems endpoints."""
+
+    def __init__(self, client: 'ApiClient'):
+        self.client = client
+
+    def get(self) -> dict:
+        """Fetch systems list (GET /systems)."""
+        return self.client.http.get_json("systems", self.client.agent_key)

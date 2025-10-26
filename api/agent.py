@@ -1,8 +1,15 @@
-from api.handle_requests import get_json
+from typing import TYPE_CHECKING
 
-class agent():
-    def __init__(self, agent_key: str):
-        self.agent_key = agent_key
+if TYPE_CHECKING:
+    from api.client import ApiClient
 
-    def get(self):
-        return get_json("my/agent", self.agent_key)
+class AgentAPI:
+    """Agent endpoints."""
+
+    def __init__(self, client: 'ApiClient'):
+        self.client = client
+
+    def get(self) -> dict:
+        """Fetch current agent details (GET /my/agent)."""
+        return self.client.http.get_json("my/agent", self.client.agent_key)
+    

@@ -1,35 +1,32 @@
 from dotenv import load_dotenv
 import os
 
-from api.agent import agent
-from data.warehouse import warehouse
-from api.systems import systems
-from api.waypoints import list_waypoints
+from api.client import ApiClient
+from data.warehouse import Warehouse
 # load environment variables
 load_dotenv()
 
-# get the API key from the environment variables
-agent_key = os.getenv("AGENT_TOKEN")
-agent = agent(agent_key)
-data = agent.get()['data']
+#create an api instance to hold the key for all api calls
+client = ApiClient(os.getenv("AGENT_TOKEN"))
+agent_data = client.agent.get()['data']
 
-dataWarehouse = warehouse()
+# Create a warehouse instance
+dataWarehouse = Warehouse()
 
-for key, value in data.items():
+for key, value in agent_data.items():
     setattr(dataWarehouse, key, value)
     
 
 print(dataWarehouse)
 
-systems_api = systems(agent_key)
+systems_api = client.systems
 systems_payload = systems_api.get()['data']
 loaded_systems = dataWarehouse.upsert_systems(systems_payload)
 print(f"Populated {len(loaded_systems)} systems")
 
-# Hydrate waypoints for HQ system to improve waypoint knowledge
 if dataWarehouse.headquarters and "-" in dataWarehouse.headquarters:
     hq_system = dataWarehouse.headquarters.split("-")[0] + "-" + dataWarehouse.headquarters.split("-")[1]
-    details = list_waypoints(hq_system, agent_key, page=1, limit=20)
+    details = client.waypoints.list(hq_system, page=1, limit=20)
     if details:
         dataWarehouse.upsert_waypoints_detail(details)
         print(f"Populated {len(details)} waypoints for system {hq_system}")
