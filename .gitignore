@@ -67,3 +67,7 @@ yarn-error.log*
 *.swp
 .DS_Store
 Thumbs.db
+
+#openapitools generated code
+packages/spacetraders_python_sdk/
+openapitools.json
