@@ -72,3 +72,6 @@ Thumbs.db
 #openapitools generated code
 packages/spacetraders_python_sdk/
 openapitools.json
+
+# Local config (do not commit environment-specific config)
+config.ini

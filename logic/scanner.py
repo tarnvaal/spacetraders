@@ -40,10 +40,13 @@ class scanner():
                         print(f"            {shipType['type']}")
                         
     def scan_fleet(self):
-        return self.client.fleet.get()
+        fleet_payload = self.client.fleet.get()
+        loaded_fleet = self.warehouse.upsert_fleet(fleet_payload)
+        print(f"Populated {len(loaded_fleet)} fleet")
 
     def print_fleet(self):
         fleet = self.client.fleet.get()
+
         for ship in fleet.get('data', []):
             print(f"Ship: {ship['symbol']}")
             print(f"    Type: {ship['registration']['role']}")

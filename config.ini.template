@@ -1,0 +1,3 @@
+[scanner]
+scan_shipyards = True
+print_shipyards = True

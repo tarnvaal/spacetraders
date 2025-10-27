@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from data.models.system import System, SystemWaypointRef
 from data.models.waypoints import Waypoints
+from data.models.ship import Ship
 
 @dataclass
 class Warehouse():
@@ -12,11 +13,10 @@ class Warehouse():
     startingFaction: str = ""
     shipCount: int = 0
     sectorsKnown: Optional[Dict[str, Any]] = None
-
-    # Indexed storage for SpaceTraders systems (per-instance)
     systems_by_symbol: Dict[str, System] = field(default_factory=dict)
     waypoints_by_symbol: Dict[str, SystemWaypointRef] = field(default_factory=dict)
     full_waypoints_by_symbol: Dict[str, Waypoints] = field(default_factory=dict)
+    ships_by_symbol: Dict[str, Ship] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.sectorsKnown is None:
@@ -59,14 +59,11 @@ class Warehouse():
     def systems_count(self) -> int:
         return len(self.systems_by_symbol)
 
-    # Waypoint detail upserts/lookups
     def upsert_waypoint_detail(self, payload: Dict[str, Any]) -> Waypoints:
         w = Waypoints.from_detail_dict(payload)
         self.full_waypoints_by_symbol[w.symbol] = w
-        # Refresh ref index with any new info
         ref = self.waypoints_by_symbol.get(w.symbol)
         if ref is None:
-            # Create a minimal ref if it didn't exist from systems payload
             ref = SystemWaypointRef(
                 symbol=w.symbol,
                 type=w.type,
@@ -77,7 +74,6 @@ class Warehouse():
             )
             self.waypoints_by_symbol[w.symbol] = ref
         else:
-            # Update known fields
             ref.type = w.type
             ref.x = w.x
             ref.y = w.y
@@ -87,6 +83,15 @@ class Warehouse():
 
     def upsert_waypoints_detail(self, payloads: List[Dict[str, Any]]) -> List[Waypoints]:
         return [self.upsert_waypoint_detail(p) for p in payloads]
+
+    def upsert_ship(self, payload: Dict[str, Any]) -> Ship:
+        ship = Ship.from_dict(payload)
+        self.ships_by_symbol[ship.symbol] = ship
+        return ship
+
+    def upsert_fleet(self, payload: Dict[str, Any]) -> List[Ship]:
+        ships_payload = payload.get('data', []) if isinstance(payload, dict) else []
+        return [self.upsert_ship(p) for p in ships_payload]
 
     def get_waypoint_ref(self, symbol: str) -> Optional[SystemWaypointRef]:
         return self.waypoints_by_symbol.get(symbol)
@@ -110,8 +115,6 @@ class Warehouse():
             return None
         return self.waypoints_by_symbol.get(wp.orbits)
 
-    
-    
     def __str__(self):
         output = ""
         output += f"Account ID: {self.accountId}\n"
@@ -121,3 +124,12 @@ class Warehouse():
         output += f"Starting Faction: {self.startingFaction}\n"
         output += f"Ship Count: {self.shipCount}\n"
         return output
+    
+    def print_warehouse_size(self):
+        print(
+            "Warehouse size: "
+            f"{self.systems_count()} systems, "
+            f"{len(self.waypoints_by_symbol)} waypoints, "
+            f"{len(self.full_waypoints_by_symbol)} full waypoints, "
+            f"{len(self.ships_by_symbol)} ships"
+        )
