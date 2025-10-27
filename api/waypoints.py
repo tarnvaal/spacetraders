@@ -52,3 +52,15 @@ class WaypointsAPI:
             params=query,
         )
         return payload.get("data", []) if isinstance(payload, dict) else []
+    
+    def find_waypoint_available_ships(self, system_symbol: str, waypoint_symbol: str) -> List[Dict[str, Any]]:
+        """
+        Find available ships at a waypoint.
+        GET v2/systems/:systemSymbol/waypoints/:shipyardWaypointSymbol/shipyard
+        Returns the 'data' array from the response.
+        """
+        payload = self.client.http.get_json(
+            f"systems/{system_symbol}/waypoints/{waypoint_symbol}/shipyard",
+            self.client.agent_key,
+        )
+        return payload.get("data", []) if isinstance(payload, dict) else []

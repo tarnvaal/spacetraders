@@ -2,6 +2,7 @@ from api.handle_requests import RequestHandler
 from api.agent import AgentAPI
 from api.systems import SystemsAPI
 from api.waypoints import WaypointsAPI
+from api.fleet import FleetAPI
 
 class ApiClient:
     """Root client that centralizes sub-APIs and holds shared HTTP/session state."""
@@ -12,3 +13,4 @@ class ApiClient:
         self.agent = AgentAPI(self)
         self.systems = SystemsAPI(self)
         self.waypoints = WaypointsAPI(self)
+        self.fleet = FleetAPI(self)
