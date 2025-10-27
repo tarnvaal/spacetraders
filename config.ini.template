@@ -2,4 +2,11 @@
 scan_shipyards = True
 print_shipyards = True
 print_fleet = True
-do_quickstart_mine = True
+scan_market_prices = True
+print_market_observations = True
+observation_good = COMMON
+
+[navigation]
+quickstart_mine = True
+scheduler = True
+scheduler_sleep_seconds = 3

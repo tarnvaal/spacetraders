@@ -80,6 +80,30 @@ class navigation():
         while True:
             ship = self._refresh_ship(ship_symbol)
             if ship.nav.status != ShipNavStatus.IN_TRANSIT:
+                # On arrival, upsert waypoint detail if missing
+                try:
+                    wp = ship.nav.waypointSymbol
+                    sys = ship.nav.systemSymbol
+                    if wp and sys and wp not in self.warehouse.full_waypoints_by_symbol:
+                        detail = self.client.waypoints.get(sys, wp)
+                        if detail:
+                            self.warehouse.upsert_waypoint_detail(detail)
+                except Exception:
+                    pass
+                return ship
+        while True:
+            ship = self._refresh_ship(ship_symbol)
+            if ship.nav.status != ShipNavStatus.IN_TRANSIT:
+                # On arrival, upsert waypoint detail if missing
+                try:
+                    wp = ship.nav.waypointSymbol
+                    sys = ship.nav.systemSymbol
+                    if wp and sys and wp not in self.warehouse.full_waypoints_by_symbol:
+                        detail = self.client.waypoints.get(sys, wp)
+                        if detail:
+                            self.warehouse.upsert_waypoint_detail(detail)
+                except Exception:
+                    pass
                 return ship
             if timeout_s is not None and (time.time() - start) >= timeout_s:
                 raise TimeoutError(f"wait_until_arrival timed out for {ship_symbol}")
@@ -198,6 +222,100 @@ class navigation():
         print(f"[Trade] Nearest marketplace: {best_sym} ({best_dist:.1f} units)")
         return best_sym
 
+    def find_best_marketplace_for_cargo(self, ship_symbol: str) -> str:
+        """
+        Choose the nearest marketplace that can buy at least one item in current cargo.
+        Falls back to nearest UNVISITED marketplace if none explicitly accept the cargo; if all
+        marketplaces are visited and none accept, falls back to nearest marketplace.
+        """
+        ship = self._refresh_ship(ship_symbol)
+        system_symbol = ship.nav.systemSymbol
+        current_wp = ship.nav.waypointSymbol
+
+        cargo_payload = self.client.fleet.get_cargo(ship_symbol)
+        inventory = (cargo_payload.get('data') or {}).get('inventory', []) if isinstance(cargo_payload, dict) else []
+        cargo_syms = {i.get('symbol') for i in inventory if i.get('symbol')}
+        if not cargo_syms:
+            return self.find_nearest_marketplace(ship_symbol)
+
+        payloads = self.client.waypoints.find_waypoints_by_trait(system_symbol, WaypointTraitType.MARKETPLACE)
+        if not payloads:
+            raise ValueError("No marketplaces found in current system")
+        self.warehouse.upsert_waypoints_detail(payloads)
+
+        candidates: list[tuple[str, float]] = []
+        for p in payloads:
+            sym = p.get('symbol')
+            if not sym:
+                continue
+            market = self.client.waypoints.get_market(system_symbol, sym)
+            if market:
+                self.warehouse.upsert_market_snapshot(system_symbol, market)
+            goods = market.get('tradeGoods', []) if isinstance(market, dict) else []
+            sellable = {g.get('symbol') for g in goods if g.get('symbol')}
+            if not (sellable & cargo_syms):
+                continue
+            dist = self._waypoint_distance(current_wp, sym)
+            candidates.append((sym, dist))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[1])
+            best_sym, best_dist = candidates[0]
+            print(f"[Trade] Best marketplace for cargo: {best_sym} ({best_dist:.1f} units)")
+            return best_sym
+
+        # Fallback to nearest UNVISITED marketplace
+        unvisited: list[tuple[str, float]] = []
+        for p in payloads:
+            sym = p.get('symbol')
+            if not sym:
+                continue
+            if sym in self.warehouse.market_prices_by_waypoint:
+                continue
+            dist = self._waypoint_distance(current_wp, sym)
+            unvisited.append((sym, dist))
+        if unvisited:
+            unvisited.sort(key=lambda x: x[1])
+            best_sym, best_dist = unvisited[0]
+            print(f"[Trade] No known buyers; mapping unvisited marketplace {best_sym} ({best_dist:.1f} units)")
+            return best_sym
+
+        # Last resort: nearest marketplace
+        return self.find_nearest_marketplace(ship_symbol)
+
+    def find_nearest_unvisited_marketplace(self, ship_symbol: str) -> str | None:
+        ship = self._refresh_ship(ship_symbol)
+        system_symbol = ship.nav.systemSymbol
+        current_wp = ship.nav.waypointSymbol
+        payloads = self.client.waypoints.find_waypoints_by_trait(system_symbol, WaypointTraitType.MARKETPLACE)
+        if not payloads:
+            return None
+        self.warehouse.upsert_waypoints_detail(payloads)
+        best_sym = None
+        best_dist = None
+        for p in payloads:
+            sym = p.get('symbol')
+            if not sym or sym in self.warehouse.market_prices_by_waypoint:
+                continue
+            dist = self._waypoint_distance(current_wp, sym)
+            if best_dist is None or dist < best_dist:
+                best_sym, best_dist = sym, dist
+        return best_sym
+
+    def _waypoint_has_trait(self, waypoint_symbol: str, trait: WaypointTraitType) -> bool:
+        """Check if a waypoint has a given trait; fetch detail if missing."""
+        full = self.warehouse.full_waypoints_by_symbol.get(waypoint_symbol)
+        if not full:
+            # Try to fetch from API using any known system (infer from symbol prefix)
+            system_symbol = "-".join(waypoint_symbol.split("-")[:2])
+            detail = self.client.waypoints.get(system_symbol, waypoint_symbol)
+            if detail:
+                self.warehouse.upsert_waypoint_detail(detail)
+                full = self.warehouse.full_waypoints_by_symbol.get(waypoint_symbol)
+        if not full:
+            return False
+        return any(t.symbol == trait.value for t in full.traits)
+
     def dock_and_sell_all_cargo(self, ship_symbol: str, market_wp_symbol: str):
         ship = self._refresh_ship(ship_symbol)
         if ship.nav.waypointSymbol != market_wp_symbol:
@@ -205,22 +323,42 @@ class navigation():
             print(f"[Nav] Waiting for {ship_symbol} to arrive at {market_wp_symbol}...")
             ship = self.wait_until_arrival(ship_symbol)
         ship = self._ensure_docked(ship_symbol)
+        # Determine what this market accepts; upsert market snapshot
+        market = self.client.waypoints.get_market(ship.nav.systemSymbol, market_wp_symbol)
+        goods = market.get('tradeGoods', []) if isinstance(market, dict) else []
+        if market:
+            try:
+                self.warehouse.upsert_market_snapshot(ship.nav.systemSymbol, market)
+                for good in goods:
+                    self.warehouse.record_good_observation(ship.nav.systemSymbol, market_wp_symbol, good)
+            except Exception:
+                pass
+        sellable = {g.get('symbol') for g in goods if g.get('symbol')}
         cargo_payload = self.client.fleet.get_cargo(ship_symbol)
         inventory = (cargo_payload.get('data') or {}).get('inventory', []) if isinstance(cargo_payload, dict) else []
         if not inventory:
             print("[Trade] No cargo to sell")
         total_credits = 0
-        for item in inventory:
+        for item in list(inventory):
             sym = item.get('symbol')
             units = item.get('units', 0)
             if not sym or not units:
                 continue
+            if sym not in sellable:
+                print(f"[Trade] Cannot sell {sym} here; skipping")
+                continue
             print(f"[Trade] Selling {units}x {sym}...")
             tx = self.client.fleet.sell(ship_symbol, sym, units)
+            if isinstance(tx, dict) and tx.get('error'):
+                err = tx.get('error', {})
+                print(f"[Trade] Sell failed for {sym}: {err.get('message', 'unknown error')}")
+                continue
             total_price = ((tx.get('data') or {}).get('transaction') or {}).get('totalPrice') if isinstance(tx, dict) else None
             if total_price is not None:
                 total_credits += total_price
                 print(f"[Trade] Sold {units}x {sym} for {total_price} credits")
+            # Refresh ship cargo state after each sale
+            self._refresh_ship(ship_symbol)
         # Refuel if possible and not full
         ship = self._refresh_ship(ship_symbol)
         if ship.fuel.current < ship.fuel.capacity:
@@ -235,20 +373,45 @@ class navigation():
 
     def quickstart_mine_until_full_and_sell(self, ship_symbol: str, *, set_mode: ShipNavFlightMode | None = None):
         print(f"[Quickstart] Starting mine-until-full-and-sell for {ship_symbol}...")
-        # Go to closest mineable node
-        ship = self.navigate_to_closest_mineable(ship_symbol, set_mode=set_mode)
-        # Refuel if not full
         ship = self._refresh_ship(ship_symbol)
+        current_wp = ship.nav.waypointSymbol
+        # Priority: (1) Full at marketplace -> sell; (2) Full not at marketplace -> go sell; (3) Not full -> mine
+        is_market_here = self._waypoint_has_trait(current_wp, WaypointTraitType.MARKETPLACE)
+        if ship.cargo.units >= ship.cargo.capacity:
+            if is_market_here:
+                # Only sell here if market buys at least one cargo item
+                market = self.client.waypoints.get_market(ship.nav.systemSymbol, current_wp)
+                goods = market.get('tradeGoods', []) if isinstance(market, dict) else []
+                sellable = {g.get('symbol') for g in goods if g.get('symbol')}
+                cargo_payload = self.client.fleet.get_cargo(ship_symbol)
+                inventory = (cargo_payload.get('data') or {}).get('inventory', []) if isinstance(cargo_payload, dict) else []
+                cargo_syms = {i.get('symbol') for i in inventory if i.get('symbol')}
+                if sellable & cargo_syms:
+                    print("[Policy] Full cargo at marketplace with demand: selling now")
+                    self.dock_and_sell_all_cargo(ship_symbol, current_wp)
+                    return self._refresh_ship(ship_symbol)
+                else:
+                    print("[Policy] Full cargo at marketplace without demand: seeking better market")
+                    market_wp = self.find_best_marketplace_for_cargo(ship_symbol)
+                    self.dock_and_sell_all_cargo(ship_symbol, market_wp)
+                    return self._refresh_ship(ship_symbol)
+            else:
+                print("[Policy] Full cargo not at marketplace: navigating to market to sell")
+                market_wp = self.find_best_marketplace_for_cargo(ship_symbol)
+                self.dock_and_sell_all_cargo(ship_symbol, market_wp)
+                return self._refresh_ship(ship_symbol)
+
+        # Not full: mine
+        # Refuel if not full and available before heading out
         if ship.fuel.current < ship.fuel.capacity:
             try:
                 print("[Quickstart] Refueling before mining (if available)...")
                 ship = self.refuel_if_available(ship_symbol)
             except Exception:
-                print("[Quickstart] Refuel unavailable at mining waypoint")
-        # Mine until full
+                print("[Quickstart] Refuel unavailable here")
+        ship = self.navigate_to_closest_mineable(ship_symbol, set_mode=set_mode)
         self.mine_until_full(ship_symbol)
-        # Sell at nearest marketplace
-        market_wp = self.find_nearest_marketplace(ship_symbol)
+        market_wp = self.find_best_marketplace_for_cargo(ship_symbol)
         self.dock_and_sell_all_cargo(ship_symbol, market_wp)
         return self._refresh_ship(ship_symbol)
 

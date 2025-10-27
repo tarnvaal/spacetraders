@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 from data.models.system import System, SystemWaypointRef
 from data.models.waypoints import Waypoints
 from data.models.ship import Ship
@@ -17,6 +18,9 @@ class Warehouse():
     waypoints_by_symbol: Dict[str, SystemWaypointRef] = field(default_factory=dict)
     full_waypoints_by_symbol: Dict[str, Waypoints] = field(default_factory=dict)
     ships_by_symbol: Dict[str, Ship] = field(default_factory=dict)
+    # Market knowledge base
+    market_prices_by_waypoint: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    goods_observations: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.sectorsKnown is None:
@@ -133,3 +137,48 @@ class Warehouse():
             f"{len(self.full_waypoints_by_symbol)} full waypoints, "
             f"{len(self.ships_by_symbol)} ships"
         )
+
+    # Market data helpers
+    def upsert_market_snapshot(self, system_symbol: str, market_data: Dict[str, Any]) -> None:
+        if not isinstance(market_data, dict):
+            return
+        waypoint_symbol = market_data.get('symbol') or market_data.get('waypointSymbol')
+        if not waypoint_symbol:
+            return
+        snapshot = {
+            'systemSymbol': system_symbol,
+            'waypointSymbol': waypoint_symbol,
+            'seenAt': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+            'tradeGoods': market_data.get('tradeGoods', []),
+        }
+        self.market_prices_by_waypoint[waypoint_symbol] = snapshot
+
+    def record_good_observation(self, system_symbol: str, waypoint_symbol: str, good: Dict[str, Any]) -> None:
+        if not isinstance(good, dict):
+            return
+        symbol = good.get('symbol')
+        if not symbol:
+            return
+        obs = {
+            'systemSymbol': system_symbol,
+            'waypointSymbol': waypoint_symbol,
+            'purchasePrice': good.get('purchasePrice'),
+            'sellPrice': good.get('sellPrice'),
+            'tradeVolume': good.get('tradeVolume'),
+            'supply': good.get('supply'),
+            'activity': good.get('activity'),
+            'seenAt': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+        }
+        self.goods_observations.setdefault(symbol, []).append(obs)
+
+    def get_best_sell_observation(self, good_symbol: str) -> Optional[Dict[str, Any]]:
+        obs_list = self.goods_observations.get(good_symbol, [])
+        if not obs_list:
+            return None
+        return max((o for o in obs_list if isinstance(o.get('sellPrice'), (int, float))), key=lambda o: o['sellPrice'], default=None)
+
+    def get_best_purchase_observation(self, good_symbol: str) -> Optional[Dict[str, Any]]:
+        obs_list = self.goods_observations.get(good_symbol, [])
+        if not obs_list:
+            return None
+        return min((o for o in obs_list if isinstance(o.get('purchasePrice'), (int, float))), key=lambda o: o['purchasePrice'], default=None)

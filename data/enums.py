@@ -100,3 +100,14 @@ class ShipNavFlightMode(Enum):
     STEALTH = "STEALTH"
     CRUISE = "CRUISE"
     BURN = "BURN"
+
+
+class CommonTradeGood(Enum):
+    """Commonly mined/traded goods we care about for observation and printing."""
+    IRON_ORE = "IRON_ORE"
+    COPPER_ORE = "COPPER_ORE"
+    ALUMINUM_ORE = "ALUMINUM_ORE"
+    SILICON_CRYSTALS = "SILICON_CRYSTALS"
+    QUARTZ_SAND = "QUARTZ_SAND"
+    ICE_WATER = "ICE_WATER"
+    FUEL = "FUEL"
