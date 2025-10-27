@@ -246,10 +246,30 @@ if not scheduler_enabled and do_quickstart_mine:
         print("[Quickstart] No excavator ships found")
     else:
         ordered_symbols = list(dict.fromkeys(([configured_symbol] if configured_symbol else []) + excavators))
-        for sym in ordered_symbols:
-            print(f"[Quickstart] Processing {sym}...")
-            ship = navigator.quickstart_mine_until_full_and_sell(sym)
-            print(f"[Quickstart] Done {sym}: {(ship.nav.status.value if ship.nav.status else '?')} @ {ship.nav.systemSymbol}/{ship.nav.waypointSymbol} | Cargo {ship.cargo.units}/{ship.cargo.capacity}")
+        try:
+            while True:
+                for sym in ordered_symbols:
+                    print(f"[Quickstart] Processing {sym}...")
+                    ship = navigator.quickstart_mine_until_full_and_sell(sym)
+                    print(f"[Quickstart] Loop Done {sym}: {(ship.nav.status.value if ship.nav.status else '?')} @ {ship.nav.systemSymbol}/{ship.nav.waypointSymbol} | Cargo {ship.cargo.units}/{ship.cargo.capacity}")
+                # credits logging
+                try:
+                    # ensure logs dir
+                    logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+                    if not os.path.isdir(logs_dir):
+                        os.makedirs(logs_dir, exist_ok=True)
+                    # refresh agent credits
+                    agent = client.agent.get().get('data', {})
+                    if agent:
+                        dataWarehouse.load_agent_data(agent)
+                    # append UTC timestamp and credits
+                    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    with open(os.path.join(logs_dir, "credits.log"), "a", encoding="utf-8") as f:
+                        f.write(f"{ts}\t{dataWarehouse.credits}\n")
+                except Exception as e:
+                    print(f"[Log] Failed to write credits log: {e}")
+        except KeyboardInterrupt:
+            print("[Quickstart] Stopped")
 
 if scheduler_enabled:
     run_scheduler()

@@ -148,7 +148,25 @@ class navigation():
         """
         self._ensure_docked(ship_symbol)
         # Attempt refuel; API will error if fuel isn't sold here. Let it propagate.
-        self.client.fleet.refuel_ship(ship_symbol, units=units, from_cargo=from_cargo)
+        resp = self.client.fleet.refuel_ship(ship_symbol, units=units, from_cargo=from_cargo)
+        # Log BUY transaction if available
+        try:
+            import os, time
+            tx = (resp.get('data') or {}).get('transaction') if isinstance(resp, dict) else None
+            if isinstance(tx, dict):
+                price_per_unit = tx.get('pricePerUnit')
+                total_price = tx.get('totalPrice')
+                purchased_units = tx.get('units')
+                logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                if not os.path.isdir(logs_dir):
+                    os.makedirs(logs_dir, exist_ok=True)
+                ship = self._refresh_ship(ship_symbol)
+                ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                with open(os.path.join(logs_dir, "trades.log"), "a", encoding="utf-8") as f:
+                    # action ship waypoint symbol units unitPrice totalPrice
+                    f.write(f"{ts}\tBUY\t{ship_symbol}\t{ship.nav.waypointSymbol}\tFUEL\t{purchased_units}\t{price_per_unit}\t{total_price}\n")
+        except Exception:
+            pass
         return self._refresh_ship(ship_symbol)
 
     def extract_at_current_waypoint(self, ship_symbol: str):
@@ -353,10 +371,25 @@ class navigation():
                 err = tx.get('error', {})
                 print(f"[Trade] Sell failed for {sym}: {err.get('message', 'unknown error')}")
                 continue
-            total_price = ((tx.get('data') or {}).get('transaction') or {}).get('totalPrice') if isinstance(tx, dict) else None
+            transaction = (tx.get('data') or {}).get('transaction') if isinstance(tx, dict) else None
+            total_price = transaction.get('totalPrice') if isinstance(transaction, dict) else None
+            price_per_unit = transaction.get('pricePerUnit') if isinstance(transaction, dict) else None
             if total_price is not None:
                 total_credits += total_price
                 print(f"[Trade] Sold {units}x {sym} for {total_price} credits")
+                # append SELL log line
+                try:
+                    import os, time
+                    logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                    if not os.path.isdir(logs_dir):
+                        os.makedirs(logs_dir, exist_ok=True)
+                    ship = self._refresh_ship(ship_symbol)
+                    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    with open(os.path.join(logs_dir, "trades.log"), "a", encoding="utf-8") as f:
+                        # action ship waypoint symbol units unitPrice totalPrice
+                        f.write(f"{ts}\tSELL\t{ship_symbol}\t{ship.nav.waypointSymbol}\t{sym}\t{units}\t{price_per_unit}\t{total_price}\n")
+                except Exception:
+                    pass
             # Refresh ship cargo state after each sale
             self._refresh_ship(ship_symbol)
         # Refuel if possible and not full
