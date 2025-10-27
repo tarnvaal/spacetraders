@@ -67,7 +67,7 @@ def main():
     # Verify we have a ship present at this waypoint (recommended for price visibility)
     if not args.skip_presence_check:
         try:
-            fleet_payload = client.fleet.get()
+            fleet_payload = client.fleet.get_my_ships()
             fleet_data = fleet_payload.get("data", []) if isinstance(fleet_payload, dict) else []
             at_waypoint = any(
                 (ship.get("nav", {}) or {}).get("waypointSymbol") == waypoint_symbol for ship in fleet_data
