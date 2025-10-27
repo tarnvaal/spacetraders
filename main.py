@@ -46,6 +46,12 @@ if print_fleet:
     scanner.print_fleet()
 dataWarehouse.print_warehouse_size()
 
+# Print all ship roles for debugging
+print("\nFleet composition:")
+for ship in dataWarehouse.ships_by_symbol.values():
+    role = ship.registration.role.value if ship.registration and ship.registration.role else "UNKNOWN"
+    print(f"  {ship.symbol}: {role}")
+
 if scan_market_prices:
     scanner.scan_marketplaces_with_probe()
 if print_market_observations:
@@ -78,6 +84,40 @@ def _is_marketplace(wp_symbol: str) -> bool:
 def _best_market_for_ship(sym: str) -> str:
     return navigator.find_best_marketplace_for_cargo(sym)
 
+def _can_market_buy_cargo(sym: str, market_wp_symbol: str) -> bool:
+    """Check if a marketplace can buy any of the ship's cargo items."""
+    try:
+        ship = dataWarehouse.ships_by_symbol.get(sym)
+        if not ship or not ship.cargo or ship.cargo.units == 0:
+            return False
+        
+        # Get ship's cargo
+        cargo_payload = client.fleet.get_cargo(sym)
+        inventory = (cargo_payload.get('data') or {}).get('inventory', []) if isinstance(cargo_payload, dict) else []
+        if not inventory:
+            return False
+        cargo_syms = {i.get('symbol') for i in inventory if i.get('symbol')}
+        
+        # Get market's accepted goods
+        system_symbol = ship.nav.systemSymbol
+        market = client.waypoints.get_market(system_symbol, market_wp_symbol)
+        if not market:
+            return False
+        
+        # Update warehouse with market data
+        dataWarehouse.upsert_market_snapshot(system_symbol, market)
+        for good in market.get('tradeGoods', []) or []:
+            dataWarehouse.record_good_observation(system_symbol, market_wp_symbol, good)
+        
+        goods = market.get('tradeGoods', []) if isinstance(market, dict) else []
+        sellable = {g.get('symbol') for g in goods if g.get('symbol')}
+        
+        # Check if any cargo can be sold
+        return bool(sellable & cargo_syms)
+    except Exception as e:
+        print(f"[Market Check] Error checking market {market_wp_symbol}: {e}")
+        return False
+
 def run_scheduler():
     # Build ship lists
     miners = [s.symbol for s in dataWarehouse.ships_by_symbol.values() if s.registration and s.registration.role == ShipRole.EXCAVATOR]
@@ -86,6 +126,12 @@ def run_scheduler():
     if not ship_order:
         print("[Scheduler] No ships to manage")
         return
+    
+    print(f"[Scheduler] Managing {len(miners)} miner(s) and {'1 probe' if probe else 'no probe'}")
+    if probe:
+        print(f"[Scheduler] Probe: {probe}")
+    for miner in miners:
+        print(f"[Scheduler] Miner: {miner}")
 
     # Per-ship queues
     queues: dict[str, list[tuple[str, dict]]] = {s: [] for s in ship_order}
@@ -110,22 +156,40 @@ def run_scheduler():
         ship = dataWarehouse.ships_by_symbol.get(sym)
         if not ship:
             return
-        # Probe behavior: hop marketplace to marketplace and record
+        # Probe behavior: continuously scan marketplaces
         from data.enums import ShipRole as _ShipRole
         if ship.registration and ship.registration.role == _ShipRole.SATELLITE:
             # Get markets list in current system
             system_symbol = ship.nav.systemSymbol
             markets = client.waypoints.find_waypoints_by_trait(system_symbol, WaypointTraitType.MARKETPLACE)
-            # Choose the closest next market
+            
             if markets:
-                # Simple pick: first market not equal to current
-                target = next((m.get('symbol') for m in markets if m.get('symbol') and m.get('symbol') != ship.nav.waypointSymbol), None)
+                # Find unvisited markets first
+                unvisited = [m for m in markets if m.get('symbol') and m.get('symbol') not in dataWarehouse.market_prices_by_waypoint]
+                
+                if unvisited:
+                    # Prioritize unvisited markets
+                    target = next((m.get('symbol') for m in unvisited if m.get('symbol') != ship.nav.waypointSymbol), None)
+                    if not target and len(unvisited) == 1:
+                        # Only one unvisited market and we're at it
+                        target = unvisited[0].get('symbol')
+                else:
+                    # All visited, rescan in round-robin fashion
+                    target = next((m.get('symbol') for m in markets if m.get('symbol') and m.get('symbol') != ship.nav.waypointSymbol), None)
+                
                 if target:
+                    print(f"[Probe][{sym}] Next target: {target}")
                     enqueue(sym, 'navigate', waypoint=target)
-                    enqueue(sym, 'dock', {})
-                    enqueue(sym, 'refuel', {})
-                    enqueue(sym, 'market_scan', {})
-                    enqueue(sym, 'orbit', {})
+                    enqueue(sym, 'dock')
+                    enqueue(sym, 'refuel')
+                    enqueue(sym, 'market_scan')
+                    enqueue(sym, 'orbit')
+                elif ship.nav.waypointSymbol in [m.get('symbol') for m in markets]:
+                    # Already at a market, just scan it
+                    enqueue(sym, 'dock')
+                    enqueue(sym, 'refuel')
+                    enqueue(sym, 'market_scan')
+                    enqueue(sym, 'orbit')
             return
 
         # Miner behavior per policy
@@ -135,23 +199,34 @@ def run_scheduler():
         # Prefer selling whenever we have any cargo
         if cargo_full or has_cargo:
             if at_market:
-                enqueue(sym, 'dock', {})
-                enqueue(sym, 'refuel', {})
-                enqueue(sym, 'sell_here', {})
-                enqueue(sym, 'orbit', {})
-                return
+                # Check if THIS market can buy our cargo
+                can_sell_here = _can_market_buy_cargo(sym, ship.nav.waypointSymbol)
+                if can_sell_here:
+                    print(f"[Sched][{sym}] Market accepts cargo, selling here")
+                    enqueue(sym, 'dock')
+                    enqueue(sym, 'refuel')
+                    enqueue(sym, 'sell_here')
+                    enqueue(sym, 'orbit')
+                    return
+                else:
+                    print(f"[Sched][{sym}] Current market doesn't buy cargo, finding better market")
+                    # Fall through to find better market
+            
+            # Not at market or current market doesn't buy our cargo
             try:
                 target = _best_market_for_ship(sym)
-            except Exception:
+            except Exception as e:
+                print(f"[Sched][{sym}] Error finding market: {e}")
                 target = None
-            if target:
+            if target and target != ship.nav.waypointSymbol:
                 enqueue(sym, 'navigate', waypoint=target)
-                enqueue(sym, 'dock', {})
-                enqueue(sym, 'refuel', {})
-                enqueue(sym, 'sell_here', {})
-                enqueue(sym, 'orbit', {})
+                enqueue(sym, 'dock')
+                enqueue(sym, 'refuel')
+                enqueue(sym, 'sell_here')
+                enqueue(sym, 'orbit')
                 return
-            # No known buyer: map unvisited markets via probe elsewhere; for miner, defer briefly
+            # No known buyer: wait for probe to discover markets
+            print(f"[Sched][{sym}] No buyer found, waiting for market discovery")
             return
         # No cargo: go mine
         try:
@@ -162,10 +237,10 @@ def run_scheduler():
             enqueue(sym, 'navigate', waypoint=target_mine)
         # If at market and can refuel, do so before mining
         if at_market:
-            enqueue(sym, 'dock', {})
-            enqueue(sym, 'refuel', {})
-            enqueue(sym, 'orbit', {})
-        enqueue(sym, 'mine_once', {})
+            enqueue(sym, 'dock')
+            enqueue(sym, 'refuel')
+            enqueue(sym, 'orbit')
+        enqueue(sym, 'mine_once')
 
     def step(sym: str):
         ship = navigator._refresh_ship(sym)  # refresh state
@@ -202,12 +277,18 @@ def run_scheduler():
             ship = navigator._refresh_ship(sym)
             system_symbol = ship.nav.systemSymbol
             wp_symbol = ship.nav.waypointSymbol
-            print(f"[Sched][{sym}] Scanning market at {wp_symbol}")
+            print(f"[Probe][{sym}] Scanning market at {wp_symbol}")
             market = client.waypoints.get_market(system_symbol, wp_symbol)
             if market:
                 dataWarehouse.upsert_market_snapshot(system_symbol, market)
-                for good in market.get('tradeGoods', []) or []:
+                goods = market.get('tradeGoods', []) or []
+                for good in goods:
                     dataWarehouse.record_good_observation(system_symbol, wp_symbol, good)
+                # Log what the market buys
+                buy_symbols = {g.get('symbol') for g in goods if g.get('symbol')}
+                print(f"[Probe][{sym}] Market {wp_symbol} buys: {', '.join(sorted(buy_symbols)) if buy_symbols else 'nothing'}")
+            else:
+                print(f"[Probe][{sym}] No market data available at {wp_symbol}")
             return True
         if action == 'sell_here':
             ship = navigator._refresh_ship(sym)
