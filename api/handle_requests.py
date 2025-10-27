@@ -121,3 +121,31 @@ class RequestHandler:
         url = f"{self.base_url}/{path}"
         resp = self.spacetraders_get(url, headers=self.auth_headers(agent_key), params=params)
         return resp.json()
+
+    def post_json(self, path: str, agent_key: str, json: dict | None = None):
+        """
+        JSON POST helper with SpaceTraders-aware retry/backoff behavior.
+        """
+        url = f"{self.base_url}/{path}"
+        resp = self.session.post(url, headers=self.auth_headers(agent_key), json=json)
+        self._abort_on_token_reset_mismatch(resp)
+        if resp.status_code == 429 and self._handle_spacetraders_429(resp):
+            resp = self.session.post(url, headers=self.auth_headers(agent_key), json=json)
+            self._abort_on_token_reset_mismatch(resp)
+        elif resp.status_code == 502:
+            self._sleep_with_jitter(3.0)
+        return resp.json()
+
+    def patch_json(self, path: str, agent_key: str, json: dict | None = None):
+        """
+        JSON PATCH helper with SpaceTraders-aware retry/backoff behavior.
+        """
+        url = f"{self.base_url}/{path}"
+        resp = self.session.patch(url, headers=self.auth_headers(agent_key), json=json)
+        self._abort_on_token_reset_mismatch(resp)
+        if resp.status_code == 429 and self._handle_spacetraders_429(resp):
+            resp = self.session.patch(url, headers=self.auth_headers(agent_key), json=json)
+            self._abort_on_token_reset_mismatch(resp)
+        elif resp.status_code == 502:
+            self._sleep_with_jitter(3.0)
+        return resp.json()

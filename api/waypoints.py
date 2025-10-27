@@ -39,6 +39,20 @@ class WaypointsAPI:
             return payload.get("data")
         return None
 
+    def get_market(self, system_symbol: str, waypoint_symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch market data for a waypoint.
+        GET /v2/systems/{systemSymbol}/waypoints/{waypointSymbol}/market
+        Returns the 'data' object from the response.
+        """
+        payload = self.client.http.get_json(
+            f"systems/{system_symbol}/waypoints/{waypoint_symbol}/market",
+            self.client.agent_key,
+        )
+        if isinstance(payload, dict):
+            return payload.get("data")
+        return None
+
     def find_waypoints_by_trait(self, system_symbol: str, trait: WaypointTraitType) -> List[Dict[str, Any]]:
         """
         Find waypoints by trait.
