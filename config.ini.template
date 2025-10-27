@@ -1,3 +1,4 @@
 [scanner]
 scan_shipyards = True
 print_shipyards = True
+print_fleet = True
