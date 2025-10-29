@@ -56,6 +56,7 @@ class ShipFuel:
 class ShipCooldown:
     totalSeconds: int = 0
     remainingSeconds: int = 0
+    expiration: str = ""
 
 
 @dataclass
@@ -160,6 +161,7 @@ class Ship:
         cooldown = ShipCooldown(
             totalSeconds=cooldown_dict.get("totalSeconds", 0),
             remainingSeconds=cooldown_dict.get("remainingSeconds", 0),
+            expiration=cooldown_dict.get("expiration", ""),
         )
 
         return Ship(

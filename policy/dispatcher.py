@@ -3,6 +3,7 @@ import logging
 from data.warehouse import Warehouse
 from flow.queue import MinHeap
 from logic.scanner import Scanner
+from logic.utility import get_utc_timestamp
 
 
 class Dispatcher:
@@ -14,3 +15,11 @@ class Dispatcher:
     def update_fleet(self):
         self.scanner.scan_fleet(all_pages=True)
         logging.info(f"Fleet updated. {len(self.warehouse.ships_by_symbol)} ships found.")
+
+    def shipReadiness(self, symbol: str):
+        ship = self.warehouse.ships_by_symbol.get(symbol)
+        arrival = ship.nav.route.arrival
+        cooldown = ship.cooldown.expiration
+        current = get_utc_timestamp()
+        priority = max(arrival, cooldown, current)
+        return priority

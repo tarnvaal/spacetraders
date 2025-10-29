@@ -27,11 +27,7 @@ cp env.example .env
 AGENT_TOKEN=your_actual_token_here
 ```
 
-5. (Optional) Configure behavior by copying and editing the config template:
-```bash
-cp config.ini.template config.ini
-```
-
+5. (Optional) Create a `.env` from the template and set your token (done above). No other config file is required.
 ### Running the Application
 
 ```bash
@@ -40,7 +36,9 @@ python main.py
 
 ## ⚙️ Configuration
 
-The application uses `config.ini` for operational settings. If this file doesn't exist, sensible defaults are used.
+Configured via environment variables. Required:
+
+- `AGENT_TOKEN` in your `.env` (or environment)
 
 ## 🏗️ Architecture
 
@@ -82,12 +80,24 @@ Implements high-level game automation and decision-making.
   - System and waypoint scanning
   - Fleet composition analysis
   - Market price gathering with probe ships
-- **`navigation.py`**: Ship movement and trading workflows
+- **`navigation.py`**: Ship movement workflows
   - Waypoint navigation with flight mode control
-  - Mining automation (extract until cargo full)
+  - Arrival polling and orbit/dock helpers
+  - Distance calculation utilities
+- **`navigation_algorithms.py`**: Targeting and pathfinding helpers
+  - Closest mineable waypoint selection
+- **`markets.py`**: Market workflows
   - Market selection and cargo selling
-  - Distance calculations and pathfinding
-- **`mine.py`**: Mining ship operations and status display
+  - Refueling when available
+  - Trade logging (appends to `logs/trades.log`)
+- **`mine.py`**: Mining ship status display
+
+### Coordination (`flow/`, `policy/`)
+
+Scheduling and readiness policies for multi-ship coordination.
+
+- **`flow/queue.py`**: Min-heap event queue
+- **`policy/dispatcher.py`**: Fleet updates and ship readiness prioritization
 
 ## 🛠️ Scripts
 
@@ -158,10 +168,9 @@ Mining operations automatically respect cooldown timers, polling ship state unti
 
 ## 📝 Logging
 
-The application maintains logs in the `logs/` directory:
+The application writes logs to the `logs/` directory (created on first write):
 
 - **`trades.log`**: Buy/sell transactions with timestamps, prices, and quantities
-- **`credits.log`**: Agent credit balance over time
 
 Log format (TSV):
 ```
@@ -173,7 +182,7 @@ timestamp	action	ship	waypoint	symbol	units	unitPrice	totalPrice
 - **Token Reset Detection**: Automatically exits if API detects token mismatch (error 4113)
 - **Rate Limit Handling**: Sleeps until rate limit resets using response headers
 - **Retry Logic**: Configurable retries with exponential backoff for transient failures
-- **Graceful Degradation**: Missing config values fallback to safe defaults
+
 
 ## 🧪 Development
 
@@ -291,7 +300,6 @@ pre-commit run --all-files
 ## ⚠️ Important Notes
 
 - The `.env` file containing your API token is excluded from version control
-- `config.ini` is also gitignored - use `config.ini.template` as a reference
 - Market data can become stale; probe ships periodically rescan for accuracy
 - Ships in transit cannot execute commands until arrival
 

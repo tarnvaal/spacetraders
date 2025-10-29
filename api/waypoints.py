@@ -2,6 +2,8 @@
 Waypoints API module for accessing waypoint details, markets, and shipyards.
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Any
 
 from data.enums import WaypointTraitType
@@ -13,7 +15,7 @@ if TYPE_CHECKING:
 class WaypointsAPI:
     """Waypoints endpoints."""
 
-    def __init__(self, client: "ApiClient"):
+    def __init__(self, client: ApiClient):
         self.client = client
 
     def list(self, system_symbol: str, *, page: int = 1, limit: int = 20) -> list[dict[str, Any]]:
