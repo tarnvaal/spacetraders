@@ -117,3 +117,9 @@ class CommonTradeGood(Enum):
     QUARTZ_SAND = "QUARTZ_SAND"
     ICE_WATER = "ICE_WATER"
     FUEL = "FUEL"
+
+
+class ShipAction(Enum):
+    NOOP = "NOOP"
+    REFUEL = "REFUEL"
+    NAVIGATE_TO_MINE = "NAVIGATE_TO_MINE"

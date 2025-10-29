@@ -26,12 +26,10 @@ class Navigation:
         # Avoid self-navigation no-ops
         current = self.warehouse.ships_by_symbol.get(ship_symbol)
         if current and current.nav and current.nav.waypointSymbol == waypoint_symbol:
-            print(f"[Nav] {ship_symbol} already at {waypoint_symbol}; skipping navigation")
             return current
         self._ensure_orbit(ship_symbol)
         if flight_mode is not None:
             self._maybe_set_flight_mode(ship_symbol, flight_mode)
-        print(f"[Nav] Navigating {ship_symbol} to {waypoint_symbol}...")
         self.client.fleet.navigate_ship(ship_symbol, waypoint_symbol)
         return self._refresh_ship(ship_symbol)
 
@@ -157,6 +155,19 @@ class Navigation:
         resp = self.client.fleet.jettison(ship_symbol, symbol, units)
         self._refresh_ship(ship_symbol)
         return resp
+
+    def refuel(self, ship_symbol: str):
+        """
+        Refuel at the current waypoint.
+        """
+        # Ensure docked then refuel
+        self._ensure_docked(ship_symbol)
+        # Max fuel is the capacity of the ship
+        ship = self._refresh_ship(ship_symbol)
+        units = ship.fuel.capacity - ship.fuel.current
+        if units > 0:
+            self.client.fleet.refuel_ship(ship_symbol, units=units, from_cargo=True)
+        return self._refresh_ship(ship_symbol)
 
     # Mining helpers removed
 
