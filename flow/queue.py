@@ -23,6 +23,14 @@ class MinHeap:
         # Inserts an element into the heap
         heappush(self.heap, (priority, self._sequence, item))
 
+    # Compatibility alias for callers expecting a push API
+    def push(self, item: Any, priority: int = 0):
+        self.insert(item, priority)
+
     def extract_min(self) -> Any:
         # Removes and returns the smallest element in the heap
         return None if not self.heap else heappop(self.heap)[2]
+
+    # Utility method to get current heap size
+    def size(self) -> int:
+        return len(self.heap)

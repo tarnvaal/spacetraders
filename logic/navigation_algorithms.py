@@ -71,9 +71,4 @@ class NavigationAlgorithms(Navigation):
                 best_sym = sym
         if not best_sym:
             raise ValueError("Unable to determine closest mineable waypoint")
-        if best_dist is not None:
-            try:
-                print(f"[Target] Closest mineable waypoint: {best_sym} ({best_dist:.1f} units)")
-            except Exception:
-                print(f"[Target] Closest mineable waypoint: {best_sym}")
         return best_sym

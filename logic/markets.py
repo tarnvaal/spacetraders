@@ -59,10 +59,6 @@ class Markets(Navigation):
                 best_sym, best_dist = sym, dist
         if not best_sym:
             raise ValueError("Unable to select nearest marketplace")
-        try:
-            print(f"[Trade] Nearest marketplace: {best_sym} ({best_dist:.1f} units)")
-        except Exception:
-            print(f"[Trade] Nearest marketplace: {best_sym}")
         return best_sym
 
     def find_best_marketplace_for_cargo(self, ship_symbol: str) -> str:
@@ -104,10 +100,6 @@ class Markets(Navigation):
         if candidates:
             candidates.sort(key=lambda x: x[1])
             best_sym, best_dist = candidates[0]
-            try:
-                print(f"[Trade] Best marketplace for cargo: {best_sym} ({best_dist:.1f} units)")
-            except Exception:
-                print(f"[Trade] Best marketplace for cargo: {best_sym}")
             return best_sym
 
         # Fallback to nearest UNVISITED marketplace
@@ -123,10 +115,6 @@ class Markets(Navigation):
         if unvisited:
             unvisited.sort(key=lambda x: x[1])
             best_sym, best_dist = unvisited[0]
-            try:
-                print(f"[Trade] No known buyers; mapping unvisited marketplace {best_sym} ({best_dist:.1f} units)")
-            except Exception:
-                print(f"[Trade] No known buyers; mapping unvisited marketplace {best_sym}")
             return best_sym
 
         # Last resort: nearest marketplace
@@ -155,7 +143,6 @@ class Markets(Navigation):
         ship = self._refresh_ship(ship_symbol)
         if ship.nav.waypointSymbol != market_wp_symbol:
             ship = self.navigate_in_system(ship_symbol, market_wp_symbol)
-            print(f"[Nav] Waiting for {ship_symbol} to arrive at {market_wp_symbol}...")
             ship = self.wait_until_arrival(ship_symbol)
         ship = self._ensure_docked(ship_symbol)
         # Determine what this market accepts; upsert market snapshot
@@ -172,7 +159,7 @@ class Markets(Navigation):
         cargo_payload = self.client.fleet.get_cargo(ship_symbol)
         inventory = (cargo_payload.get("data") or {}).get("inventory", []) if isinstance(cargo_payload, dict) else []
         if not inventory:
-            print("[Trade] No cargo to sell")
+            pass
         total_credits = 0
         for item in list(inventory):
             sym = item.get("symbol")
@@ -180,20 +167,15 @@ class Markets(Navigation):
             if not sym or not units:
                 continue
             if sym not in sellable:
-                print(f"[Trade] Cannot sell {sym} here; skipping")
                 continue
-            print(f"[Trade] Selling {units}x {sym}...")
             tx = self.client.fleet.sell(ship_symbol, sym, units)
             if isinstance(tx, dict) and tx.get("error"):
-                err = tx.get("error", {})
-                print(f"[Trade] Sell failed for {sym}: {err.get('message', 'unknown error')}")
                 continue
             transaction = (tx.get("data") or {}).get("transaction") if isinstance(tx, dict) else None
             total_price = transaction.get("totalPrice") if isinstance(transaction, dict) else None
             price_per_unit = transaction.get("pricePerUnit") if isinstance(transaction, dict) else None
             if total_price is not None:
                 total_credits += total_price
-                print(f"[Trade] Sold {units}x {sym} for {total_price} credits")
                 # append SELL log line
                 try:
                     import os
@@ -217,10 +199,8 @@ class Markets(Navigation):
         ship = self._refresh_ship(ship_symbol)
         if ship.fuel.current < ship.fuel.capacity:
             try:
-                print("[Trade] Refueling (if available)...")
                 ship = self.refuel_if_available(ship_symbol)
             except Exception:
-                print("[Trade] Refuel unavailable at this marketplace")
+                pass
         ship = self._ensure_orbit(ship_symbol)
-        print(f"[Trade] Selling complete. +{total_credits} credits")
         return ship

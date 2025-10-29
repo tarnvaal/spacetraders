@@ -26,12 +26,10 @@ class Navigation:
         # Avoid self-navigation no-ops
         current = self.warehouse.ships_by_symbol.get(ship_symbol)
         if current and current.nav and current.nav.waypointSymbol == waypoint_symbol:
-            print(f"[Nav] {ship_symbol} already at {waypoint_symbol}; skipping navigation")
             return current
         self._ensure_orbit(ship_symbol)
         if flight_mode is not None:
             self._maybe_set_flight_mode(ship_symbol, flight_mode)
-        print(f"[Nav] Navigating {ship_symbol} to {waypoint_symbol}...")
         self.client.fleet.navigate_ship(ship_symbol, waypoint_symbol)
         return self._refresh_ship(ship_symbol)
 
