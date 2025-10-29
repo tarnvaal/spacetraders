@@ -18,6 +18,10 @@ class MinHeap:
         # Returns the smallest element in the heap without removing it
         return None if not self.heap else self.heap[0][2]
 
+    def peek_next_priority(self) -> Any:
+        # Returns the smallest priority in the heap without removing it
+        return None if not self.heap else self.heap[0][0]
+
     def insert(self, item: Any, priority: int = 0):
         self._sequence += 1
         # Inserts an element into the heap

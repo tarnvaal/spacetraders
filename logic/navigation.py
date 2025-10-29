@@ -156,6 +156,19 @@ class Navigation:
         self._refresh_ship(ship_symbol)
         return resp
 
+    def refuel(self, ship_symbol: str):
+        """
+        Refuel at the current waypoint.
+        """
+        # Ensure docked then refuel
+        self._ensure_docked(ship_symbol)
+        # Max fuel is the capacity of the ship
+        ship = self._refresh_ship(ship_symbol)
+        units = ship.fuel.capacity - ship.fuel.current
+        if units > 0:
+            self.client.fleet.refuel_ship(ship_symbol, units=units, from_cargo=True)
+        return self._refresh_ship(ship_symbol)
+
     # Mining helpers removed
 
     def _waypoint_distance(self, a_symbol: str, b_symbol: str) -> float:
