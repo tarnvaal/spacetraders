@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
@@ -13,8 +12,8 @@ class SystemWaypointRef:
     type: str
     x: int
     y: int
-    orbitals: List[str] = field(default_factory=list)
-    orbits: Optional[str] = None
+    orbitals: list[str] = field(default_factory=list)
+    orbits: str | None = None
 
 
 @dataclass
@@ -24,8 +23,8 @@ class System:
     type: str
     x: int
     y: int
-    waypoints: List[SystemWaypointRef]
-    factions: List[SystemFaction]
+    waypoints: list[SystemWaypointRef]
+    factions: list[SystemFaction]
 
     @staticmethod
     def from_dict(d: dict) -> "System":
@@ -47,11 +46,5 @@ class System:
                 for w in d.get("waypoints", [])
                 if w and all(k in w for k in ("symbol", "type", "x", "y"))
             ],
-            factions=[
-                SystemFaction(symbol=f.get("symbol"))
-                for f in d.get("factions", [])
-                if f and "symbol" in f
-            ],
+            factions=[SystemFaction(symbol=f.get("symbol")) for f in d.get("factions", []) if f and "symbol" in f],
         )
-
-

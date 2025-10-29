@@ -1,6 +1,7 @@
 from api.client import ApiClient
-from data.warehouse import Warehouse
 from data.enums import WaypointTraitType
+from data.warehouse import Warehouse
+
 from .navigation import Navigation
 
 
@@ -76,5 +77,3 @@ class NavigationAlgorithms(Navigation):
             except Exception:
                 print(f"[Target] Closest mineable waypoint: {best_sym}")
         return best_sym
-
-

@@ -31,5 +31,3 @@ Steps:
 
 - Keep any policy/looping logic outside of `logic/*` to avoid embedding flows in the core helpers.
 - If you need additional algorithms (distance heuristics, selection logic), put them in `logic/navigation_algorithms.py` and keep them pure (no control flow orchestration).
-
-

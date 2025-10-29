@@ -1,21 +1,20 @@
-from dotenv import load_dotenv
+import logging
 import os
 import sys
-import configparser
-import time
-import logging
+
+from dotenv import load_dotenv
 
 from api.client import ApiClient
 from data.warehouse import Warehouse
-from data.enums import WaypointTraitType, ShipRole
-from logic.scanner import Scanner
-from logic.mine import Mine
+from flow.queue import MinHeap
 from logic.navigation import Navigation
+from logic.scanner import Scanner
 from policy.dispatcher import Dispatcher
+
 # load environment variables
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Validate required environment variables
 agent_token = os.getenv("AGENT_TOKEN")
@@ -26,9 +25,9 @@ if not agent_token:
 
 logging.info("Systems initializing")
 
-#create an api instance to hold the key for all api calls
+# create an api instance to hold the key for all api calls
 client = ApiClient(agent_token)
-dataWarehouse = Warehouse()  
+dataWarehouse = Warehouse()
 scanner = Scanner(client, dataWarehouse)
 navigator = Navigation(client, dataWarehouse)
 
@@ -36,5 +35,6 @@ logging.info("All systems operational.")
 credits = scanner.get_credits()
 logging.info(f"Credits: {credits}")
 
-dispatcher = Dispatcher(dataWarehouse, scanner)
-dispatcher.fill_ship_queue()
+event_queue = MinHeap()
+dispatcher = Dispatcher(dataWarehouse, scanner, event_queue)
+dispatcher.update_fleet()

@@ -1,20 +1,22 @@
 """
 Waypoints API module for accessing waypoint details, markets, and shipyards.
 """
-from typing import Dict, Any, List, Optional
-from typing import TYPE_CHECKING
+
+from typing import TYPE_CHECKING, Any
+
 from data.enums import WaypointTraitType
 
 if TYPE_CHECKING:
     from api.client import ApiClient
-    
+
+
 class WaypointsAPI:
     """Waypoints endpoints."""
 
-    def __init__(self, client: 'ApiClient'):
+    def __init__(self, client: "ApiClient"):
         self.client = client
 
-    def list(self, system_symbol: str, *, page: int = 1, limit: int = 20) -> List[Dict[str, Any]]:
+    def list(self, system_symbol: str, *, page: int = 1, limit: int = 20) -> list[dict[str, Any]]:
         """
         Fetch a page of waypoints for a system.
         GET /v2/systems/{systemSymbol}/waypoints
@@ -28,7 +30,7 @@ class WaypointsAPI:
         )
         return payload.get("data", []) if isinstance(payload, dict) else []
 
-    def get(self, system_symbol: str, waypoint_symbol: str) -> Optional[Dict[str, Any]]:
+    def get(self, system_symbol: str, waypoint_symbol: str) -> dict[str, Any] | None:
         """
         Fetch waypoint details for a single waypoint.
         GET /v2/systems/{systemSymbol}/waypoints/{waypointSymbol}
@@ -42,7 +44,7 @@ class WaypointsAPI:
             return payload.get("data")
         return None
 
-    def get_market(self, system_symbol: str, waypoint_symbol: str) -> Optional[Dict[str, Any]]:
+    def get_market(self, system_symbol: str, waypoint_symbol: str) -> dict[str, Any] | None:
         """
         Fetch market data for a waypoint.
         GET /v2/systems/{systemSymbol}/waypoints/{waypointSymbol}/market
@@ -56,7 +58,7 @@ class WaypointsAPI:
             return payload.get("data")
         return None
 
-    def find_waypoints_by_trait(self, system_symbol: str, trait: WaypointTraitType) -> List[Dict[str, Any]]:
+    def find_waypoints_by_trait(self, system_symbol: str, trait: WaypointTraitType) -> list[dict[str, Any]]:
         """
         Find waypoints by trait.
         GET /v2/systems/{systemSymbol}/waypoints?traits={trait}
@@ -69,8 +71,8 @@ class WaypointsAPI:
             params=query,
         )
         return payload.get("data", []) if isinstance(payload, dict) else []
-    
-    def find_waypoint_available_ships(self, system_symbol: str, waypoint_symbol: str) -> List[Dict[str, Any]]:
+
+    def find_waypoint_available_ships(self, system_symbol: str, waypoint_symbol: str) -> list[dict[str, Any]]:
         """
         Find available ships at a waypoint.
         GET v2/systems/:systemSymbol/waypoints/:shipyardWaypointSymbol/shipyard

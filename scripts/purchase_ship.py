@@ -1,6 +1,7 @@
+import argparse
 import os
 import sys
-import argparse
+
 from dotenv import load_dotenv
 
 from api.client import ApiClient
@@ -118,5 +119,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

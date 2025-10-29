@@ -314,4 +314,3 @@ This project is provided as-is for educational and automation purposes within th
 - [SpaceTraders API Documentation](https://docs.spacetraders.io)
 - [SpaceTraders Discord Community](https://discord.com/invite/jh6zurdWk5)
 - [Game Website](https://spacetraders.io)
-

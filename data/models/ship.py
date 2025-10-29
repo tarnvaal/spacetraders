@@ -1,48 +1,49 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
-from data.enums import ShipRole, ShipNavStatus, ShipNavFlightMode
+from typing import Any
+
+from data.enums import ShipNavFlightMode, ShipNavStatus, ShipRole
 
 
 @dataclass
 class ShipRegistration:
-    name: Optional[str]
-    factionSymbol: Optional[str]
-    role: Optional[ShipRole]
+    name: str | None
+    factionSymbol: str | None
+    role: ShipRole | None
 
 
 @dataclass
 class ShipNavRouteWaypoint:
-    symbol: Optional[str]
-    type: Optional[str]
-    systemSymbol: Optional[str]
-    x: Optional[int]
-    y: Optional[int]
+    symbol: str | None
+    type: str | None
+    systemSymbol: str | None
+    x: int | None
+    y: int | None
 
 
 @dataclass
 class ShipNavRoute:
-    departure: Optional[ShipNavRouteWaypoint]
-    destination: Optional[ShipNavRouteWaypoint]
-    departureTime: Optional[str]
-    arrival: Optional[str]
-    distance: Optional[int]
+    departure: ShipNavRouteWaypoint | None
+    destination: ShipNavRouteWaypoint | None
+    departureTime: str | None
+    arrival: str | None
+    distance: int | None
 
 
 @dataclass
 class ShipNav:
-    systemSymbol: Optional[str]
-    waypointSymbol: Optional[str]
-    route: Optional[ShipNavRoute]
-    status: Optional[ShipNavStatus]
+    systemSymbol: str | None
+    waypointSymbol: str | None
+    route: ShipNavRoute | None
+    status: ShipNavStatus | None
     flightMode: ShipNavFlightMode = ShipNavFlightMode.CRUISE
 
 
 @dataclass
 class ShipEngine:
-    symbol: Optional[str]
-    name: Optional[str]
-    description: Optional[str]
-    speed: Optional[int]
+    symbol: str | None
+    name: str | None
+    description: str | None
+    speed: int | None
 
 
 @dataclass
@@ -68,13 +69,13 @@ class Ship:
     symbol: str
     registration: ShipRegistration
     nav: ShipNav
-    engine: Optional[ShipEngine] = None
+    engine: ShipEngine | None = None
     fuel: ShipFuel = field(default_factory=ShipFuel)
     cargo: ShipCargo = field(default_factory=ShipCargo)
     cooldown: ShipCooldown = field(default_factory=ShipCooldown)
 
     @staticmethod
-    def from_dict(d: Dict[str, Any]) -> "Ship":
+    def from_dict(d: dict[str, Any]) -> "Ship":
         registration_dict = d.get("registration", {}) or {}
         role_value = registration_dict.get("role")
         role = ShipRole(role_value) if isinstance(role_value, str) and role_value in ShipRole.__members__ else None
@@ -88,7 +89,7 @@ class Ship:
         nav_dict = d.get("nav", {}) or {}
         route_dict = nav_dict.get("route", {}) or {}
 
-        def wp_from(dct: Dict[str, Any]) -> ShipNavRouteWaypoint:
+        def wp_from(dct: dict[str, Any]) -> ShipNavRouteWaypoint:
             if not isinstance(dct, dict):
                 return ShipNavRouteWaypoint(symbol=None, type=None, systemSymbol=None, x=None, y=None)
             return ShipNavRouteWaypoint(
@@ -99,13 +100,17 @@ class Ship:
                 y=dct.get("y"),
             )
 
-        route = ShipNavRoute(
-            departure=wp_from(route_dict.get("origin", {})),
-            destination=wp_from(route_dict.get("destination", {})),
-            departureTime=route_dict.get("departureTime"),
-            arrival=route_dict.get("arrival"),
-            distance=route_dict.get("distance"),
-        ) if route_dict else None
+        route = (
+            ShipNavRoute(
+                departure=wp_from(route_dict.get("origin", {})),
+                destination=wp_from(route_dict.get("destination", {})),
+                departureTime=route_dict.get("departureTime"),
+                arrival=route_dict.get("arrival"),
+                distance=route_dict.get("distance"),
+            )
+            if route_dict
+            else None
+        )
 
         status_value = nav_dict.get("status")
         status = None
@@ -166,5 +171,3 @@ class Ship:
             cargo=cargo,
             cooldown=cooldown,
         )
-
-

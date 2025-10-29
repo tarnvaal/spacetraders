@@ -62,4 +62,3 @@ check-all:  ## Run all checks (format, lint, type-check)
 	@$(MAKE) lint
 	@$(MAKE) type-check
 	@echo "=== All checks completed ==="
-

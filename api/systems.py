@@ -1,15 +1,17 @@
 """
 Systems API module for accessing star system information and metadata.
 """
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from api.client import ApiClient
 
+
 class SystemsAPI:
     """Systems endpoints."""
 
-    def __init__(self, client: 'ApiClient'):
+    def __init__(self, client: "ApiClient"):
         self.client = client
 
     def get(self) -> dict:

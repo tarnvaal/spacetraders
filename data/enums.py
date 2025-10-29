@@ -1,7 +1,9 @@
 """
 Enumerations for SpaceTraders game constants including waypoint traits, ship roles, and navigation states.
 """
+
 from enum import Enum
+
 
 class WaypointTraitType(Enum):
     UNCHARTED = "UNCHARTED"
@@ -107,6 +109,7 @@ class ShipNavFlightMode(Enum):
 
 class CommonTradeGood(Enum):
     """Commonly mined/traded goods we care about for observation and printing."""
+
     IRON_ORE = "IRON_ORE"
     COPPER_ORE = "COPPER_ORE"
     ALUMINUM_ORE = "ALUMINUM_ORE"

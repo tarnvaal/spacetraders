@@ -2,14 +2,16 @@
 Navigation module for ship movement, mining operations, and trading workflows.
 Handles waypoint navigation, cargo management, and automated mining cycles.
 """
-import time
+
 import math
+import time
+
 from api.client import ApiClient
-from data.warehouse import Warehouse
 from data.enums import ShipNavFlightMode, ShipNavStatus, WaypointTraitType
+from data.warehouse import Warehouse
 
 
-class Navigation():
+class Navigation:
     def __init__(self, client: ApiClient, warehouse: Warehouse):
         self.client = client
         self.warehouse = warehouse
@@ -67,7 +69,12 @@ class Navigation():
                 break
             # If destination differs from current waypoint, we might be mid-transition; keep polling briefly
             route = ship.nav.route
-            if route and route.destination and route.destination.symbol and ship.nav.waypointSymbol != route.destination.symbol:
+            if (
+                route
+                and route.destination
+                and route.destination.symbol
+                and ship.nav.waypointSymbol != route.destination.symbol
+            ):
                 # still about to depart or instant-hop; keep polling
                 pass
             else:
@@ -103,7 +110,7 @@ class Navigation():
     def _get_ship_dict(self, ship_symbol: str) -> dict:
         payload = self.client.fleet.get_ship(ship_symbol)
         if isinstance(payload, dict):
-            return payload.get('data', payload)
+            return payload.get("data", payload)
         return {}
 
     def _refresh_ship(self, ship_symbol: str):
@@ -157,7 +164,7 @@ class Navigation():
         a = self.warehouse.waypoints_by_symbol.get(a_symbol)
         b = self.warehouse.waypoints_by_symbol.get(b_symbol)
         if not a or not b:
-            return float('inf')
+            return float("inf")
         return self._distance_hypot(a.x, a.y, b.x, b.y)
 
     # Market helpers moved to logic/markets.py
@@ -191,5 +198,3 @@ class Navigation():
     # Navigation flow helpers removed
 
     # Quickstart flows removed
-
-

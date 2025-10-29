@@ -20,7 +20,7 @@ We have a vehicle routing problem with the excavators and haulers.
 I need to decide which strategy to use. Initial research suggests using a PDVRP(Pickup and Delivery Routing Problem) solution.
 Refueling complicates this as we want ships to use optimal speeds.
 
-Bandits vs Optimizers. 
+Bandits vs Optimizers.
 Run a known good route or explore a new route?
 
 Policy/Guard rails
@@ -29,5 +29,3 @@ Price impact? How much do we personally affect prices? Can we anticpate this?
 
 Junk dealing
 Discovery profit margins and come up with a plan to discard junk not worth the time to sell.
-
-

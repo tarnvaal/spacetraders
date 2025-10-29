@@ -2,13 +2,16 @@
 HTTP request handler with rate limiting, retry logic, and SpaceTraders-specific error handling.
 Implements intelligent backoff for 429 (rate limit) and 5xx (server) errors.
 """
-import time
+
 import sys
+import time
+
 import requests
+from pyrate_limiter import Duration, Limiter, MemoryListBucket, RequestRate
 from requests.adapters import HTTPAdapter
+from requests_ratelimiter import LimiterSession
 from urllib3.util.retry import Retry
-from requests_ratelimiter import LimiterSession, LimiterAdapter
-from pyrate_limiter import Limiter, RequestRate, Duration, MemoryListBucket
+
 
 class RequestHandler:
     def __init__(self, base_url: str):
@@ -20,9 +23,11 @@ class RequestHandler:
         )
         self.session = LimiterSession(limiter=self.limiter, per_host=False)
         self.retry = Retry(
-            total=6,                        
-            connect=3, read=3, status=6,    
-            backoff_factor=1.2,            
+            total=6,
+            connect=3,
+            read=3,
+            status=6,
+            backoff_factor=1.2,
             status_forcelist=[429, 500, 502, 503, 504],
             respect_retry_after_header=True,
             raise_on_status=False,

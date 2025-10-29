@@ -1,16 +1,19 @@
 """
 Fleet API module for ship control operations including navigation, extraction, and trading.
 """
+
 from typing import TYPE_CHECKING
+
 from data.enums import ShipNavFlightMode
 
 if TYPE_CHECKING:
     from api.client import ApiClient
 
+
 class FleetAPI:
     """Fleet endpoints."""
 
-    def __init__(self, client: 'ApiClient'):
+    def __init__(self, client: "ApiClient"):
         self.client = client
 
     def get_my_ships(self, page: int | None = None, limit: int | None = None) -> dict:
@@ -21,7 +24,7 @@ class FleetAPI:
         if limit is not None:
             params["limit"] = limit
         return self.client.http.get_json("my/ships", self.client.agent_key, params=(params or None))
-    
+
     def get_ship(self, ship_symbol: str) -> dict:
         """Fetch a single ship (GET /my/ships/{shipSymbol})."""
         return self.client.http.get_json(f"my/ships/{ship_symbol}", self.client.agent_key)

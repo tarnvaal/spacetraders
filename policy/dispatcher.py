@@ -1,14 +1,16 @@
+import logging
+
 from data.warehouse import Warehouse
-from data.enums import ShipRole, ShipNavStatus
-from logic.scanner import Scanner
 from flow.queue import MinHeap
+from logic.scanner import Scanner
+
 
 class Dispatcher:
-    def __init__(self, warehouse: Warehouse, scanner: Scanner):
+    def __init__(self, warehouse: Warehouse, scanner: Scanner, event_queue: MinHeap):
         self.warehouse = warehouse
         self.scanner = scanner
-        self.ship_queue = []
-        self.marketplaces = {}
-        
-    def fill_ship_queue(self):
+        self.event_queue = event_queue
+
+    def update_fleet(self):
         self.scanner.scan_fleet(all_pages=True)
+        logging.info(f"Fleet updated. {len(self.warehouse.ships_by_symbol)} ships found.")
