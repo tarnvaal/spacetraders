@@ -270,7 +270,7 @@ class navigation():
             if market:
                 self.warehouse.upsert_market_snapshot(system_symbol, market)
             goods = market.get('tradeGoods', []) if isinstance(market, dict) else []
-            sellable = {g.get('symbol') for g in goods if g.get('symbol')}
+            sellable = {g.get('symbol') for g in goods if g.get('symbol') and g.get('sellPrice', 0) > 0}
             if not (sellable & cargo_syms):
                 continue
             dist = self._waypoint_distance(current_wp, sym)
@@ -351,7 +351,7 @@ class navigation():
                     self.warehouse.record_good_observation(ship.nav.systemSymbol, market_wp_symbol, good)
             except Exception:
                 pass
-        sellable = {g.get('symbol') for g in goods if g.get('symbol')}
+        sellable = {g.get('symbol') for g in goods if g.get('symbol') and g.get('sellPrice', 0) > 0}
         cargo_payload = self.client.fleet.get_cargo(ship_symbol)
         inventory = (cargo_payload.get('data') or {}).get('inventory', []) if isinstance(cargo_payload, dict) else []
         if not inventory:
@@ -415,7 +415,7 @@ class navigation():
                 # Only sell here if market buys at least one cargo item
                 market = self.client.waypoints.get_market(ship.nav.systemSymbol, current_wp)
                 goods = market.get('tradeGoods', []) if isinstance(market, dict) else []
-                sellable = {g.get('symbol') for g in goods if g.get('symbol')}
+                sellable = {g.get('symbol') for g in goods if g.get('symbol') and g.get('sellPrice', 0) > 0}
                 cargo_payload = self.client.fleet.get_cargo(ship_symbol)
                 inventory = (cargo_payload.get('data') or {}).get('inventory', []) if isinstance(cargo_payload, dict) else []
                 cargo_syms = {i.get('symbol') for i in inventory if i.get('symbol')}

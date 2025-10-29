@@ -110,7 +110,7 @@ def _can_market_buy_cargo(sym: str, market_wp_symbol: str) -> bool:
             dataWarehouse.record_good_observation(system_symbol, market_wp_symbol, good)
         
         goods = market.get('tradeGoods', []) if isinstance(market, dict) else []
-        sellable = {g.get('symbol') for g in goods if g.get('symbol')}
+        sellable = {g.get('symbol') for g in goods if g.get('symbol') and g.get('sellPrice', 0) > 0}
         
         # Check if any cargo can be sold
         return bool(sellable & cargo_syms)
