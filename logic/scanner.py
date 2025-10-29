@@ -16,9 +16,8 @@ class Scanner():
             setattr(self.warehouse, key, value)
         self.hq_system = "-".join((agent_data['headquarters'].split("-")[:2]))
         
-    def print_hq_system(self):
-        print(f"HQ system: {self.hq_system}")
-        print(F"Credits: {self.warehouse.credits}")
+    def get_credits(self):
+        return self.warehouse.credits
         
     def scan_systems(self):
         systems_api = self.client.systems
