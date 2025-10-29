@@ -1,3 +1,7 @@
+"""
+Navigation module for ship movement, mining operations, and trading workflows.
+Handles waypoint navigation, cargo management, and automated mining cycles.
+"""
 import time
 import math
 from api.client import ApiClient
@@ -5,7 +9,7 @@ from data.warehouse import Warehouse
 from data.enums import ShipNavFlightMode, ShipNavStatus, WaypointTraitType
 
 
-class navigation():
+class Navigation():
     def __init__(self, client: ApiClient, warehouse: Warehouse):
         self.client = client
         self.warehouse = warehouse
@@ -77,20 +81,6 @@ class navigation():
             time.sleep(max(1, poll_interval_s))
 
         # In transit: wait until arrival
-        while True:
-            ship = self._refresh_ship(ship_symbol)
-            if ship.nav.status != ShipNavStatus.IN_TRANSIT:
-                # On arrival, upsert waypoint detail if missing
-                try:
-                    wp = ship.nav.waypointSymbol
-                    sys = ship.nav.systemSymbol
-                    if wp and sys and wp not in self.warehouse.full_waypoints_by_symbol:
-                        detail = self.client.waypoints.get(sys, wp)
-                        if detail:
-                            self.warehouse.upsert_waypoint_detail(detail)
-                except Exception:
-                    pass
-                return ship
         while True:
             ship = self._refresh_ship(ship_symbol)
             if ship.nav.status != ShipNavStatus.IN_TRANSIT:

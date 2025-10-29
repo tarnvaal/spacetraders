@@ -1,8 +1,11 @@
+"""
+Mine module for basic mining ship operations and fleet status display.
+"""
 from api.client import ApiClient
 from data.warehouse import Warehouse
 from data.enums import WaypointTraitType, ShipRole
 
-class mine():
+class Mine():
     def __init__(self, client: ApiClient, warehouse: Warehouse):
         self.client = client
         self.warehouse = warehouse

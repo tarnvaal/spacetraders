@@ -1,3 +1,6 @@
+"""
+Systems API module for accessing star system information and metadata.
+"""
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

@@ -1,3 +1,7 @@
+"""
+Warehouse module for caching and managing game state including systems, waypoints, ships, and market data.
+Serves as the central data store for all discovered game entities.
+"""
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from datetime import datetime

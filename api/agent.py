@@ -1,3 +1,6 @@
+"""
+Agent API module for accessing player account information and agent details.
+"""
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

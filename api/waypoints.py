@@ -1,3 +1,6 @@
+"""
+Waypoints API module for accessing waypoint details, markets, and shipyards.
+"""
 from typing import Dict, Any, List, Optional
 from typing import TYPE_CHECKING
 from data.enums import WaypointTraitType

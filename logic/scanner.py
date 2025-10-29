@@ -1,8 +1,12 @@
+"""
+Scanner module for discovering and mapping systems, waypoints, ships, and markets.
+Handles initial fleet and system reconnaissance operations.
+"""
 from api.client import ApiClient
 from data.warehouse import Warehouse
 from data.enums import WaypointTraitType, ShipRole, CommonTradeGood
 
-class scanner():
+class Scanner():
     def __init__(self, client: ApiClient, warehouse: Warehouse):
         self.client = client
         self.warehouse = warehouse
@@ -105,8 +109,8 @@ class scanner():
             try:
                 print(f"[Probe] Navigating {symbol} to {wp_symbol} for market scan...")
                 # Ensure orbit, navigate, wait, dock, fetch market
-                from logic.navigation import navigation
-                nav = navigation(self.client, self.warehouse)
+                from logic.navigation import Navigation
+                nav = Navigation(self.client, self.warehouse)
                 nav.navigate_in_system(symbol, wp_symbol)
                 nav.wait_until_arrival(symbol, poll_interval_s=3, timeout_s=120)
                 nav._ensure_docked(symbol)

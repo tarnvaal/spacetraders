@@ -1,23 +1,31 @@
 from dotenv import load_dotenv
 import os
+import sys
 import configparser
 import time
 
 from api.client import ApiClient
 from data.warehouse import Warehouse
 from data.enums import WaypointTraitType, ShipRole
-from logic.scanner import scanner
-from logic.mine import mine
-from logic.navigation import navigation
+from logic.scanner import Scanner
+from logic.mine import Mine
+from logic.navigation import Navigation
 
 # load environment variables
 load_dotenv()
 
+# Validate required environment variables
+agent_token = os.getenv("AGENT_TOKEN")
+if not agent_token:
+    print("Error: AGENT_TOKEN not found in environment.", file=sys.stderr)
+    print("Please set AGENT_TOKEN in your .env file or environment.", file=sys.stderr)
+    sys.exit(1)
+
 #create an api instance to hold the key for all api calls
-client = ApiClient(os.getenv("AGENT_TOKEN"))
+client = ApiClient(agent_token)
 dataWarehouse = Warehouse()  
-scanner = scanner(client, dataWarehouse)
-navigator = navigation(client, dataWarehouse)
+scanner = Scanner(client, dataWarehouse)
+navigator = Navigation(client, dataWarehouse)
 
 # load optional config.ini
 config = configparser.ConfigParser()
@@ -60,8 +68,8 @@ if print_market_observations:
     else:
         scanner.print_known_market_observations()
 
-mine = mine(client, dataWarehouse)
-mine.mine()
+miner = Mine(client, dataWarehouse)
+miner.mine()
 
 def _is_ship_busy(sym: str) -> bool:
     ship = dataWarehouse.ships_by_symbol.get(sym)

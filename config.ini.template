@@ -8,5 +8,5 @@ observation_good = COMMON
 
 [navigation]
 quickstart_mine = True
-scheduler = True
+scheduler_enabled = True
 scheduler_sleep_seconds = 3

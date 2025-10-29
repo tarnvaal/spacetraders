@@ -1,3 +1,6 @@
+"""
+Fleet API module for ship control operations including navigation, extraction, and trading.
+"""
 from typing import TYPE_CHECKING
 from data.enums import ShipNavFlightMode
 

@@ -1,3 +1,7 @@
+"""
+API Client module providing centralized access to SpaceTraders API endpoints.
+Orchestrates sub-API modules for agent, systems, waypoints, and fleet operations.
+"""
 from api.handle_requests import RequestHandler
 from api.agent import AgentAPI
 from api.systems import SystemsAPI

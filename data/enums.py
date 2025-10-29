@@ -1,3 +1,6 @@
+"""
+Enumerations for SpaceTraders game constants including waypoint traits, ship roles, and navigation states.
+"""
 from enum import Enum
 
 class WaypointTraitType(Enum):

@@ -1,3 +1,7 @@
+"""
+HTTP request handler with rate limiting, retry logic, and SpaceTraders-specific error handling.
+Implements intelligent backoff for 429 (rate limit) and 5xx (server) errors.
+"""
 import time
 import sys
 import requests
