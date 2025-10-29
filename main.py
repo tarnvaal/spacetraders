@@ -11,7 +11,7 @@ from data.enums import WaypointTraitType, ShipRole
 from logic.scanner import Scanner
 from logic.mine import Mine
 from logic.navigation import Navigation
-
+from policy.dispatcher import Dispatcher
 # load environment variables
 load_dotenv()
 
@@ -35,3 +35,6 @@ navigator = Navigation(client, dataWarehouse)
 logging.info("All systems operational.")
 credits = scanner.get_credits()
 logging.info(f"Credits: {credits}")
+
+dispatcher = Dispatcher(dataWarehouse, scanner)
+dispatcher.fill_ship_queue()

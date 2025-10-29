@@ -13,9 +13,14 @@ class FleetAPI:
     def __init__(self, client: 'ApiClient'):
         self.client = client
 
-    def get_my_ships(self) -> dict:
-        """Fetch fleet list (GET /my/ships)."""
-        return self.client.http.get_json("my/ships", self.client.agent_key)
+    def get_my_ships(self, page: int | None = None, limit: int | None = None) -> dict:
+        """Fetch fleet list (GET /my/ships) with optional pagination."""
+        params: dict = {}
+        if page is not None:
+            params["page"] = page
+        if limit is not None:
+            params["limit"] = limit
+        return self.client.http.get_json("my/ships", self.client.agent_key, params=(params or None))
     
     def get_ship(self, ship_symbol: str) -> dict:
         """Fetch a single ship (GET /my/ships/{shipSymbol})."""

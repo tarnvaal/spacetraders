@@ -43,10 +43,48 @@ class Scanner():
                     for shipType in available_ships.get('shipTypes', []):
                         print(f"            {shipType['type']}")
                         
-    def scan_fleet(self):
-        fleet_payload = self.client.fleet.get_my_ships()
-        loaded_fleet = self.warehouse.upsert_fleet(fleet_payload)
-        print(f"Populated {len(loaded_fleet)} fleet")
+    def scan_fleet(self, pages: int = 1, limit: int | None = None, all_pages: bool = False):
+        """Scan and upsert fleet, supporting pagination.
+        By default scans a single page. Use pages>1 for a fixed count, or set all_pages=True to fetch all.
+        """
+        total_loaded = 0
+        current_page = 1
+        requested_pages = max(1, pages)
+
+        while True:
+            payload = self.client.fleet.get_my_ships(page=current_page, limit=limit)
+            loaded = self.warehouse.upsert_fleet(payload)
+            total_loaded += len(loaded)
+
+            meta = payload.get('meta', {}) if isinstance(payload, dict) else {}
+            data_len = len(payload.get('data', []) or []) if isinstance(payload, dict) else 0
+
+            if not all_pages and current_page >= requested_pages:
+                break
+
+            # Determine if there's another page
+            next_page_exists = False
+            total_items = meta.get('total')
+            meta_limit = meta.get('limit') or limit
+            meta_page = meta.get('page') or current_page
+            if isinstance(total_items, int) and isinstance(meta_limit, int) and meta_limit > 0:
+                # Compute total pages and compare
+                total_pages = (total_items + meta_limit - 1) // meta_limit
+                next_page_exists = meta_page < total_pages
+            else:
+                # Fallback: if fewer items than requested limit, assume no more pages
+                if isinstance(meta_limit, int):
+                    next_page_exists = data_len >= meta_limit
+                else:
+                    # Unknown limit -> continue until we hit an empty page
+                    next_page_exists = data_len > 0
+
+            if not next_page_exists:
+                break
+
+            current_page += 1
+
+        print(f"Populated {total_loaded} fleet")
 
     def print_fleet(self):
         fleet = self.client.fleet.get_my_ships()
@@ -76,80 +114,3 @@ class Scanner():
             cooldown = ship.get('cooldown', {})
             if cooldown.get('totalSeconds', 0) > 0:
                 print(f"    Cooldown: {cooldown.get('remainingSeconds', 0)} / {cooldown.get('totalSeconds', 0)}")
-
-    # Probe market scanning
-    def _get_probe_symbol(self) -> str | None:
-        for ship in self.warehouse.ships_by_symbol.values():
-            if ship.registration and ship.registration.role == ShipRole.SATELLITE:
-                return ship.symbol
-        return None
-
-    def scan_marketplaces_with_probe(self, probe_symbol: str | None = None):
-        """
-        Navigate a probe between marketplaces in the HQ system, docking to fetch market data and
-        upserting observations into the warehouse.
-        """
-        symbol = probe_symbol or self._get_probe_symbol()
-        if not symbol:
-            print("[Probe] No probe (SATELLITE) ship found; skipping market scan")
-            return
-        # Enumerate marketplaces in HQ system
-        waypoints_payload = self.client.waypoints.find_waypoints_by_trait(self.hq_system, WaypointTraitType.MARKETPLACE)
-        if not waypoints_payload:
-            print("[Probe] No marketplaces found in HQ system; skipping")
-            return
-        self.warehouse.upsert_waypoints_detail(waypoints_payload)
-
-        # For a simple pass: iterate in listed order
-        for wp in waypoints_payload:
-            wp_symbol = wp.get('symbol')
-            if not wp_symbol:
-                continue
-            try:
-                print(f"[Probe] Navigating {symbol} to {wp_symbol} for market scan...")
-                # Ensure orbit, navigate, wait, dock, fetch market
-                from logic.navigation import Navigation
-                nav = Navigation(self.client, self.warehouse)
-                nav.navigate_in_system(symbol, wp_symbol)
-                nav.wait_until_arrival(symbol, poll_interval_s=3, timeout_s=120)
-                nav._ensure_docked(symbol)
-                market = self.client.waypoints.get_market(self.hq_system, wp_symbol)
-                if market:
-                    self.warehouse.upsert_market_snapshot(self.hq_system, market)
-                    for good in market.get('tradeGoods', []) or []:
-                        self.warehouse.record_good_observation(self.hq_system, wp_symbol, good)
-                    print(f"[Probe] Recorded market at {wp_symbol} with {len(market.get('tradeGoods', []) or [])} goods")
-                else:
-                    print(f"[Probe] No market data at {wp_symbol}")
-                nav._ensure_orbit(symbol)
-            except Exception as e:
-                print(f"[Probe] Error scanning {wp_symbol}: {e}")
-
-    def print_known_market_observations(self, good_symbol: str | None = None):
-        def _print_one(symbol: str):
-            obs = self.warehouse.goods_observations.get(symbol, [])
-            print(f"Known observations for {symbol} ({len(obs)}):")
-            for o in obs:
-                print(f"  {o.get('waypointSymbol')} sell {o.get('sellPrice')} buy {o.get('purchasePrice')} vol {o.get('tradeVolume')} seen {o.get('seenAt')}")
-
-        if good_symbol:
-            # Support enums and plain strings
-            try:
-                if good_symbol.upper() == "COMMON":
-                    for cg in CommonTradeGood:
-                        _print_one(cg.value)
-                    return
-                # If matches a CommonTradeGood, map to value
-                if good_symbol in CommonTradeGood.__members__:
-                    symbol = CommonTradeGood[good_symbol].value
-                    _print_one(symbol)
-                    return
-            except Exception:
-                pass
-            _print_one(good_symbol)
-            return
-
-        print("Known market snapshots by waypoint:")
-        for wp, snap in self.warehouse.market_prices_by_waypoint.items():
-            goods = snap.get('tradeGoods', []) or []
-            print(f"  {wp} ({len(goods)} goods) seen {snap.get('seenAt')}")
