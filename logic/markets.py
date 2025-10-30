@@ -116,10 +116,11 @@ class Markets(Navigation):
             sym = p.get("symbol")
             if not sym:
                 continue
-            market = self.client.waypoints.get_market(system_symbol, sym)
-            if market:
-                self.warehouse.upsert_market_snapshot(system_symbol, market)
-            goods = market.get("tradeGoods", []) if isinstance(market, dict) else []
+            # Only use cached market snapshots from the warehouse; do not call the API here.
+            snapshot = self.warehouse.market_prices_by_waypoint.get(sym)
+            if not isinstance(snapshot, dict):
+                continue
+            goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
             sellable = {g.get("symbol") for g in goods if g.get("symbol") and g.get("sellPrice", 0) > 0}
             if not (sellable & cargo_syms):
                 continue
