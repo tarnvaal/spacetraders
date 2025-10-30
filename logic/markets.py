@@ -182,6 +182,33 @@ class Markets(Navigation):
                 best_sym, best_dist = sym, dist
         return best_sym
 
+    def find_oldest_marketplace(self, ship_symbol: str, exclude: set[str] | None = None) -> str | None:
+        """
+        Among marketplaces in the current system that we've already visited (have a snapshot),
+        return the one with the oldest seenAt timestamp. Excludes any symbols in `exclude`.
+        """
+        ship = self._refresh_ship(ship_symbol)
+        system_symbol = ship.nav.systemSymbol
+        payloads = self.client.waypoints.find_waypoints_by_trait(system_symbol, WaypointTraitType.MARKETPLACE)
+        if not payloads:
+            return None
+        self.warehouse.upsert_waypoints_detail(payloads)
+        oldest_sym = None
+        oldest_ts = None
+        for p in payloads:
+            sym = p.get("symbol")
+            if not sym:
+                continue
+            if exclude and sym in exclude:
+                continue
+            snapshot = self.warehouse.market_prices_by_waypoint.get(sym)
+            if not isinstance(snapshot, dict):
+                continue  # only consider already-visited markets
+            ts = snapshot.get("seenAt") or ""
+            if oldest_ts is None or (isinstance(ts, str) and ts < oldest_ts):
+                oldest_sym, oldest_ts = sym, ts
+        return oldest_sym
+
     def dock_and_sell_all_cargo(self, ship_symbol: str, market_wp_symbol: str):
         ship = self._refresh_ship(ship_symbol)
         if ship.nav.waypointSymbol != market_wp_symbol:

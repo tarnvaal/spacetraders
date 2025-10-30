@@ -103,7 +103,10 @@ class Dispatcher:
                     }
                     target = self.markets.find_nearest_unvisited_marketplace(symbol, exclude=exclude)
                     if not target:
-                        target = self.markets.find_nearest_marketplace(symbol, exclude=exclude)
+                        # When no unvisited markets remain, scout the oldest visited marketplace in-system
+                        target = self.markets.find_oldest_marketplace(
+                            symbol, exclude=exclude
+                        ) or self.markets.find_nearest_marketplace(symbol, exclude=exclude)
                     if target and rt is not None:
                         rt.context["target_market"] = target
                         logging.debug(f"decide_next_action[{symbol}]: choosing PROBE_VISIT_MARKET -> {target}")
