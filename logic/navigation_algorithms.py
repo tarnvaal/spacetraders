@@ -8,6 +8,8 @@ from .navigation import Navigation
 class NavigationAlgorithms(Navigation):
     def __init__(self, client: ApiClient, warehouse: Warehouse):
         super().__init__(client, warehouse)
+        # Simple in-memory cache of mineable waypoint candidates per system
+        self._mineable_cache: dict[str, dict[str, dict]] = {}
 
     def find_closest_mineable_waypoint(self, ship_symbol: str, traits: list[WaypointTraitType] | None = None) -> str:
         """
@@ -25,7 +27,8 @@ class NavigationAlgorithms(Navigation):
                 WaypointTraitType.EXPLOSIVE_GASES,
             ]
 
-        ship = self._refresh_ship(ship_symbol)
+        # Prefer cached ship to avoid extra GET
+        ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
         system_symbol = ship.nav.systemSymbol
         current_wp_symbol = ship.nav.waypointSymbol
 
@@ -40,13 +43,16 @@ class NavigationAlgorithms(Navigation):
             raise ValueError(f"Unknown current waypoint in warehouse: {current_wp_symbol}")
 
         # Query candidates by trait and upsert into warehouse for coordinate access
-        seen: dict[str, dict] = {}
-        for trait in traits:
-            payloads = self.client.waypoints.find_waypoints_by_trait(system_symbol, trait)
-            for p in payloads:
-                sym = p.get("symbol") if isinstance(p, dict) else None
-                if sym and sym != current_wp_symbol and sym not in seen:
-                    seen[sym] = p
+        seen: dict[str, dict] = dict(self._mineable_cache.get(system_symbol, {}))
+        if not seen:
+            for trait in traits:
+                payloads = self.client.waypoints.find_waypoints_by_trait(system_symbol, trait)
+                for p in payloads:
+                    sym = p.get("symbol") if isinstance(p, dict) else None
+                    if sym and sym != current_wp_symbol and sym not in seen:
+                        seen[sym] = p
+            # Cache for subsequent calls in this system
+            self._mineable_cache[system_symbol] = dict(seen)
         if not seen:
             raise ValueError("No mineable waypoints found in current system")
 
@@ -72,6 +78,60 @@ class NavigationAlgorithms(Navigation):
         if not best_sym:
             raise ValueError("Unable to determine closest mineable waypoint")
         return best_sym
+
+    def list_mineable_waypoints_sorted(
+        self, ship_symbol: str, traits: list[WaypointTraitType] | None = None
+    ) -> list[str]:
+        """Return mineable waypoint symbols in the current system sorted by distance from the ship."""
+        if traits is None:
+            traits = [
+                WaypointTraitType.MINERAL_DEPOSITS,
+                WaypointTraitType.COMMON_METAL_DEPOSITS,
+                WaypointTraitType.PRECIOUS_METAL_DEPOSITS,
+                WaypointTraitType.RARE_METAL_DEPOSITS,
+                WaypointTraitType.METHANE_POOLS,
+                WaypointTraitType.ICE_CRYSTALS,
+                WaypointTraitType.EXPLOSIVE_GASES,
+            ]
+        ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
+        system_symbol = ship.nav.systemSymbol
+        current_wp_symbol = ship.nav.waypointSymbol
+
+        current_ref = self.warehouse.waypoints_by_symbol.get(current_wp_symbol)
+        if not current_ref:
+            detail = self.client.waypoints.get(system_symbol, current_wp_symbol)
+            if detail:
+                self.warehouse.upsert_waypoint_detail(detail)
+                current_ref = self.warehouse.waypoints_by_symbol.get(current_wp_symbol)
+        if not current_ref:
+            return []
+
+        seen: dict[str, dict] = dict(self._mineable_cache.get(system_symbol, {}))
+        if not seen:
+            for trait in traits:
+                payloads = self.client.waypoints.find_waypoints_by_trait(system_symbol, trait)
+                for p in payloads:
+                    sym = p.get("symbol") if isinstance(p, dict) else None
+                    if sym and sym != current_wp_symbol and sym not in seen:
+                        seen[sym] = p
+            self._mineable_cache[system_symbol] = dict(seen)
+
+        # Persist for coordinates
+        self.warehouse.upsert_waypoints_detail(list(seen.values()))
+
+        def _dist(sym: str) -> float:
+            px = seen[sym].get("x") if isinstance(seen[sym], dict) else None
+            py = seen[sym].get("y") if isinstance(seen[sym], dict) else None
+            if px is None or py is None:
+                ref = self.warehouse.waypoints_by_symbol.get(sym)
+                if not ref:
+                    return float("inf")
+                return self._distance_hypot(current_ref.x, current_ref.y, ref.x, ref.y)
+            return self._distance_hypot(current_ref.x, current_ref.y, px, py)
+
+        syms = list(seen.keys())
+        syms.sort(key=_dist)
+        return syms
 
     def find_closest_refuel_waypoint(self, ship_symbol: str) -> str:
         """

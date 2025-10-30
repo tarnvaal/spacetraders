@@ -33,7 +33,16 @@ class Markets(Navigation):
                 logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
                 if not os.path.isdir(logs_dir):
                     os.makedirs(logs_dir, exist_ok=True)
-                ship = self._refresh_ship(ship_symbol)
+                # Update cached ship with new fuel status from response if available
+                ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
+                try:
+                    data_obj = resp.get("data") if isinstance(resp, dict) else None
+                    fuel_obj = data_obj.get("fuel") if isinstance(data_obj, dict) else None
+                    if isinstance(fuel_obj, dict) and ship and ship.fuel:
+                        ship.fuel.current = fuel_obj.get("current", ship.fuel.current)
+                        ship.fuel.capacity = fuel_obj.get("capacity", ship.fuel.capacity)
+                except Exception:
+                    pass
                 ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 with open(os.path.join(logs_dir, "trades.log"), "a", encoding="utf-8") as f:
                     # action ship waypoint symbol units unitPrice totalPrice
@@ -65,10 +74,11 @@ class Markets(Navigation):
                     pass
         except Exception:
             pass
-        return self._refresh_ship(ship_symbol)
+        # Return cached ship; we've applied fuel updates above
+        return self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
 
     def find_nearest_marketplace(self, ship_symbol: str, exclude: set[str] | None = None) -> str:
-        ship = self._refresh_ship(ship_symbol)
+        ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
         system_symbol = ship.nav.systemSymbol
         current_wp = ship.nav.waypointSymbol
         payloads = self.client.waypoints.find_waypoints_by_trait(system_symbol, WaypointTraitType.MARKETPLACE)
@@ -90,11 +100,12 @@ class Markets(Navigation):
             raise ValueError("Unable to select nearest marketplace")
         return best_sym
 
-    def find_best_marketplace_for_cargo(self, ship_symbol: str) -> str:
+    def find_best_marketplace_for_cargo(self, ship_symbol: str, *, min_sell_price: int = 0) -> str:
         """
-        Choose the nearest marketplace that can buy at least one item in current cargo.
-        Falls back to nearest UNVISITED marketplace if none explicitly accept the cargo; if all
-        marketplaces are visited and none accept, falls back to nearest marketplace.
+        Choose a marketplace that buys the most items currently in cargo (greedy),
+        restricted to goods with sellPrice >= min_sell_price, tie-breaking by distance.
+        Falls back to nearest UNVISITED marketplace; if all visited and none accept,
+        falls back to nearest marketplace.
         """
         ship = self._refresh_ship(ship_symbol)
         system_symbol = ship.nav.systemSymbol
@@ -111,7 +122,7 @@ class Markets(Navigation):
             raise ValueError("No marketplaces found in current system")
         self.warehouse.upsert_waypoints_detail(payloads)
 
-        candidates: list[tuple[str, float]] = []
+        candidates: list[tuple[str, int, float]] = []  # (wp, match_count, dist)
         for p in payloads:
             sym = p.get("symbol")
             if not sym:
@@ -121,15 +132,19 @@ class Markets(Navigation):
             if not isinstance(snapshot, dict):
                 continue
             goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
-            sellable = {g.get("symbol") for g in goods if g.get("symbol") and g.get("sellPrice", 0) > 0}
-            if not (sellable & cargo_syms):
+            sellable = {
+                g.get("symbol") for g in goods if g.get("symbol") and (g.get("sellPrice", 0) or 0) >= min_sell_price
+            }
+            matches = sellable & cargo_syms
+            if not matches:
                 continue
             dist = self._waypoint_distance(current_wp, sym)
-            candidates.append((sym, dist))
+            candidates.append((sym, len(matches), dist))
 
         if candidates:
-            candidates.sort(key=lambda x: x[1])
-            best_sym, best_dist = candidates[0]
+            # Prefer most matches, then nearest
+            candidates.sort(key=lambda x: (-x[1], x[2]))
+            best_sym, _match_count, _dist = candidates[0]
             return best_sym
 
         # Fallback to nearest UNVISITED marketplace
@@ -307,7 +322,7 @@ class Markets(Navigation):
                     logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
                     if not os.path.isdir(logs_dir):
                         os.makedirs(logs_dir, exist_ok=True)
-                    ship = self._refresh_ship(ship_symbol)
+                    ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
                     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     with open(os.path.join(logs_dir, "trades.log"), "a", encoding="utf-8") as f:
                         # action ship waypoint symbol units unitPrice totalPrice

@@ -1,7 +1,6 @@
 import logging
-import math
 
-from data.enums import ShipAction, ShipRole
+from data.enums import ShipAction, ShipNavStatus, ShipRole, WaypointTraitType
 from data.models.runtime import ShipRuntime, ShipState
 from data.warehouse import Warehouse
 from flow.queue import MinHeap
@@ -88,8 +87,12 @@ class Dispatcher:
         )
 
         if state == ShipState.IDLE:
-            # Refuel only if current location is known to sell fuel
-            if ship.fuel.current < ship.fuel.capacity and _current_wp_sells_fuel():
+            # Refuel only if current location is known to sell fuel and not in transit
+            if (
+                ship.fuel.current < ship.fuel.capacity
+                and _current_wp_sells_fuel()
+                and nav_status != ShipNavStatus.IN_TRANSIT
+            ):
                 logging.debug(f"decide_next_action[{symbol}]: choosing REFUEL")
                 return ShipAction.REFUEL
             # Probe behavior: visit marketplaces to reveal prices
@@ -113,7 +116,7 @@ class Dispatcher:
                         return ShipAction.PROBE_VISIT_MARKET
                 except Exception:
                     pass
-            # Mine behavior for excavators: if in selling mode, continue selling until empty; otherwise mine until full then sell.
+            # Mine behavior for excavators: if in selling mode, continue selling until empty; otherwise mine until full of worthy goods then sell.
             if ship.registration and ship.registration.role == ShipRole.EXCAVATOR:
                 # Continue selling loop if flagged
                 if rt.context.get("selling"):
@@ -142,7 +145,7 @@ class Dispatcher:
                                     sellable = {
                                         g.get("symbol")
                                         for g in goods
-                                        if isinstance(g, dict) and g.get("sellPrice", 0) > 0
+                                        if isinstance(g, dict) and (g.get("sellPrice", 0) or 0) > 10
                                     }
                                     if not (sellable & cargo_syms):
                                         continue
@@ -166,8 +169,8 @@ class Dispatcher:
                     logging.debug(f"decide_next_action[{symbol}]: selling complete; resume mining")
                     return ShipAction.NAVIGATE_TO_MINE
 
-                # Helper: jettison goods that have no known buyers in cached market snapshots
-                def _jettison_unsellable() -> bool:
+                # Helper: jettison goods that have no known buyers or are low-value (<=10) based on best known price
+                def _jettison_unworthy(min_price: int = 10) -> bool:
                     try:
                         cargo_payload = self.scanner.client.fleet.get_cargo(symbol)
                         inventory = (
@@ -177,21 +180,29 @@ class Dispatcher:
                         )
                         if not inventory:
                             return False
-                        known_buyers: set[str] = set()
-                        for snapshot in self.warehouse.market_prices_by_waypoint.values():
-                            goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
-                            for g in goods:
-                                if not isinstance(g, dict):
-                                    continue
-                                if g.get("sellPrice", 0) and g.get("symbol"):
-                                    known_buyers.add(g.get("symbol"))
+
+                        # Determine if a good is sellable at acceptable price via observations or cached snapshots
+                        def _is_worthy(sym: str) -> bool:
+                            best = self.warehouse.get_best_sell_observation(sym)
+                            if best and isinstance(best.get("sellPrice"), int | float):
+                                return best.get("sellPrice", 0) > min_price
+                            # Fallback: any cached snapshot in any market with price > min_price
+                            for snapshot in self.warehouse.market_prices_by_waypoint.values():
+                                goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
+                                for g in goods:
+                                    if not isinstance(g, dict):
+                                        continue
+                                    if g.get("symbol") == sym and (g.get("sellPrice", 0) or 0) > min_price:
+                                        return True
+                            return False
+
                         did = False
                         for item in inventory:
                             gsym = item.get("symbol")
                             units = item.get("units", 0)
                             if not gsym or not units:
                                 continue
-                            if gsym not in known_buyers:
+                            if not _is_worthy(gsym):
                                 try:
                                     self.scanner.client.fleet.jettison(symbol, gsym, units)
                                     did = True
@@ -201,60 +212,31 @@ class Dispatcher:
                     except Exception:
                         return False
 
-                # If not full, purge unsellable items and keep mining
+                # If not full, purge unsellable/low-value items and keep mining
                 if ship.cargo and ship.cargo.units < ship.cargo.capacity:
                     try:
-                        _jettison_unsellable()
+                        _jettison_unworthy(10)
                     except Exception:
                         pass
                     logging.debug(f"decide_next_action[{symbol}]: choosing NAVIGATE_TO_MINE")
                     return ShipAction.NAVIGATE_TO_MINE
 
-                # If full, pick nearest known buyer (from cached snapshots) and go sell; otherwise jettison unsellables and resume mining
+                # If full, and cargo consists of worthy goods, switch to selling; otherwise jettison low-value and resume mining
                 if ship.cargo and ship.cargo.units >= ship.cargo.capacity:
                     try:
-                        cargo_payload = self.scanner.client.fleet.get_cargo(symbol)
-                        inventory = (
-                            (cargo_payload.get("data") or {}).get("inventory", [])
-                            if isinstance(cargo_payload, dict)
-                            else []
-                        )
-                        cargo_syms = {i.get("symbol") for i in inventory if isinstance(i, dict) and i.get("symbol")}
-
-                        def _dist(a_sym: str, b_sym: str) -> float:
-                            a = self.warehouse.waypoints_by_symbol.get(a_sym)
-                            b = self.warehouse.waypoints_by_symbol.get(b_sym)
-                            if not a or not b:
-                                return float("inf")
-                            dx = (a.x or 0) - (b.x or 0)
-                            dy = (a.y or 0) - (b.y or 0)
-                            return math.hypot(dx, dy)
-
-                        current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
-                        best_sym = None
-                        best_dist = None
-                        if current_wp and cargo_syms:
-                            for wp_sym, snapshot in self.warehouse.market_prices_by_waypoint.items():
-                                goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
-                                sellable = {
-                                    g.get("symbol") for g in goods if isinstance(g, dict) and g.get("sellPrice", 0) > 0
-                                }
-                                if not (sellable & cargo_syms):
-                                    continue
-                                d = _dist(current_wp, wp_sym)
-                                if best_dist is None or d < best_dist:
-                                    best_sym, best_dist = wp_sym, d
-                        if best_sym:
-                            rt.context["target_market"] = best_sym
+                        best_market = self.markets.find_best_marketplace_for_cargo(symbol, min_sell_price=10)
+                        # Heuristic: if we can find a market buying at least one current cargo good at >=10, switch to selling
+                        if isinstance(best_market, str) and best_market:
+                            rt.context["target_market"] = best_market
                             rt.context["selling"] = True
                             logging.debug(
-                                f"decide_next_action[{symbol}]: cargo full, targeting PROBE_VISIT_MARKET -> {best_sym}"
+                                f"decide_next_action[{symbol}]: cargo full & worthy; selling at {best_market}"
                             )
                             return ShipAction.PROBE_VISIT_MARKET
 
-                        # No known buyers -> jettison unsellables and resume mining
+                        # No worthy buyers -> jettison unworthy and resume mining
                         try:
-                            if _jettison_unsellable():
+                            if _jettison_unworthy(10):
                                 logging.debug(f"decide_next_action[{symbol}]: jettisoned unsellables; resume mining")
                                 return ShipAction.NAVIGATE_TO_MINE
                         except Exception:
@@ -265,8 +247,27 @@ class Dispatcher:
 
         if state == ShipState.NAVIGATING:
             if rt.context.get("destination") == "MINE":
-                logging.debug(f"decide_next_action[{symbol}]: NAVIGATING→EXTRACT_MINERALS")
-                return ShipAction.EXTRACT_MINERALS
+                # Only extract after arrival at intended mineable waypoint
+                if nav_status != ShipNavStatus.IN_TRANSIT:
+                    current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
+                    target_wp = rt.context.get("mine_target")
+                    mineable_traits = [
+                        WaypointTraitType.MINERAL_DEPOSITS,
+                        WaypointTraitType.COMMON_METAL_DEPOSITS,
+                        WaypointTraitType.PRECIOUS_METAL_DEPOSITS,
+                        WaypointTraitType.RARE_METAL_DEPOSITS,
+                        WaypointTraitType.METHANE_POOLS,
+                        WaypointTraitType.ICE_CRYSTALS,
+                        WaypointTraitType.EXPLOSIVE_GASES,
+                    ]
+                    try:
+                        if current_wp:
+                            has_mine = any(self.markets._waypoint_has_trait(current_wp, t) for t in mineable_traits)
+                            if has_mine and (not isinstance(target_wp, str) or current_wp == target_wp):
+                                logging.debug(f"decide_next_action[{symbol}]: NAVIGATING→EXTRACT_MINERALS")
+                                return ShipAction.EXTRACT_MINERALS
+                    except Exception:
+                        pass
             return ShipAction.NOOP
 
         if state == ShipState.MINING:

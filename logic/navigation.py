@@ -23,9 +23,8 @@ class Navigation:
         Ensures orbit, optionally sets flight mode, then navigates.
         Returns the refreshed Ship model from the warehouse.
         """
-        self._refresh_ship(ship_symbol)
-        # Avoid self-navigation no-ops
-        current = self.warehouse.ships_by_symbol.get(ship_symbol)
+        # Avoid eager GET; prefer cached ship when available
+        current = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
         if current and current.nav and current.nav.waypointSymbol == waypoint_symbol:
             return current
         self._ensure_orbit(ship_symbol)
@@ -33,6 +32,7 @@ class Navigation:
             self._maybe_set_flight_mode(ship_symbol, flight_mode)
         resp = self.client.fleet.navigate_ship(ship_symbol, waypoint_symbol)
         # Apply POST response to cached ship to avoid immediate GET
+        # Prefer cached ship; API response applied below keeps it up-to-date
         ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
         try:
             data_obj = resp.get("data") if isinstance(resp, dict) else None
@@ -193,7 +193,7 @@ class Navigation:
         return self.warehouse.upsert_ship(ship_dict)
 
     def _ensure_orbit(self, ship_symbol: str):
-        ship = self._refresh_ship(ship_symbol)
+        ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
         if ship.nav.status == ShipNavStatus.DOCKED:
             resp = self.client.fleet.orbit_ship(ship_symbol)
             # Apply nav status from POST response
@@ -211,7 +211,7 @@ class Navigation:
         return ship
 
     def _ensure_docked(self, ship_symbol: str):
-        ship = self._refresh_ship(ship_symbol)
+        ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
         if ship.nav.status == ShipNavStatus.IN_ORBIT:
             resp = self.client.fleet.dock_ship(ship_symbol)
             # Apply nav status from POST response
@@ -229,7 +229,7 @@ class Navigation:
         return ship
 
     def _maybe_set_flight_mode(self, ship_symbol: str, mode: ShipNavFlightMode):
-        ship = self._refresh_ship(ship_symbol)
+        ship = self.warehouse.ships_by_symbol.get(ship_symbol) or self._refresh_ship(ship_symbol)
         if ship.nav.flightMode != mode:
             resp = self.client.fleet.set_flight_mode(ship_symbol, mode)
             try:

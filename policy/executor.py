@@ -1,7 +1,7 @@
 import logging
 
 from api.client import ApiClient
-from data.enums import ShipAction, ShipRole
+from data.enums import ShipAction, ShipNavFlightMode, ShipNavStatus, ShipRole
 from data.models.runtime import ShipState
 from data.warehouse import Warehouse
 from logic.markets import Markets
@@ -48,16 +48,80 @@ class ActionExecutor:
         )
 
     def _navigate_to_mine(self, ship_symbol: str) -> None:
-        closest = self.navigator_algorithms.find_closest_mineable_waypoint(ship_symbol)
-        logging.info(f"Closest mineable waypoint: {closest}")
-        if not closest:
-            return
-        ship = self.navigator.navigate_in_system(ship_symbol, closest)
+        candidates = self.navigator_algorithms.list_mineable_waypoints_sorted(ship_symbol)
+        if not candidates:
+            try:
+                one = self.navigator_algorithms.find_closest_mineable_waypoint(ship_symbol)
+                candidates = [one] if one else []
+            except Exception:
+                candidates = []
+        logging.info(f"Mineable candidates (closest first): {candidates[:5]}{'...' if len(candidates)>5 else ''}")
         rt = self.data_warehouse.runtime.get(ship_symbol)
-        if rt and ship and ship.nav and ship.nav.route:
-            rt.state = ShipState.NAVIGATING
-            rt.context["destination"] = "MINE"
-        logging.info(f"Navigating to {closest}")
+
+        def attempt(target: str, mode: ShipNavFlightMode) -> bool:
+            # Ensure orbit and set flight mode
+            try:
+                self.navigator._ensure_orbit(ship_symbol)
+            except Exception:
+                pass
+            try:
+                self.navigator._maybe_set_flight_mode(ship_symbol, mode)
+            except Exception:
+                pass
+            # Call raw navigate to inspect errors
+            resp = self.client.fleet.navigate_ship(ship_symbol, target)
+            if isinstance(resp, dict) and resp.get("error"):
+                err = resp.get("error") or {}
+                code = err.get("code")
+                if code == 4203:
+                    data = err.get("data") or {}
+                    fuel_req = data.get("fuelRequired")
+                    fuel_avail = data.get("fuelAvailable")
+                    logging.info(
+                        f"Insufficient fuel for {mode.name} to {target}: required={fuel_req} available={fuel_avail}"
+                    )
+                    return False
+                # Other errors
+                logging.info(f"Navigate error to {target}: {err}")
+                return False
+            # Success: apply minimal update via cached ship refresh
+            try:
+                ship2 = self.data_warehouse.ships_by_symbol.get(ship_symbol) or self.navigator._refresh_ship(
+                    ship_symbol
+                )
+                in_transit2 = ship2.nav.status == ShipNavStatus.IN_TRANSIT if ship2 and ship2.nav else False
+                dest2 = (
+                    ship2.nav.route.destination.symbol
+                    if ship2 and ship2.nav and ship2.nav.route and ship2.nav.route.destination
+                    else None
+                )
+                if rt and in_transit2 and dest2 == target:
+                    rt.state = ShipState.NAVIGATING
+                    rt.context["destination"] = "MINE"
+                    rt.context["mine_target"] = target
+                    logging.info(f"Navigating to {target} via {mode.name}")
+                    return True
+            except Exception:
+                pass
+            return False
+
+        # Try reachable targets with BURN
+        for tgt in candidates:
+            if attempt(tgt, ShipNavFlightMode.BURN):
+                return
+
+        # No BURN target reachable: drift to best (closest)
+        if candidates:
+            if attempt(candidates[0], ShipNavFlightMode.DRIFT):
+                return
+
+        # Backoff if all attempts failed
+        if rt:
+            from datetime import datetime, timedelta, timezone
+
+            when = datetime.now(timezone.utc) + timedelta(seconds=30)
+            rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        logging.debug("navigate_to_mine: no reachable targets; backed off")
 
     def _extract_minerals(self, ship_symbol: str) -> None:
         self.navigator.extract_at_current_waypoint(ship_symbol)
@@ -65,6 +129,24 @@ class ActionExecutor:
         rt = self.data_warehouse.runtime.get(ship_symbol)
         if rt and ship and ship.cooldown:
             rt.state = ShipState.MINING
+            # Ensure scheduler sleeps until cooldown expiration even if ship model isn't fully updated
+            try:
+                exp = getattr(ship.cooldown, "expiration", "")
+                if isinstance(exp, str) and exp:
+                    rt.next_wakeup_ts = exp
+                elif getattr(ship.cooldown, "remainingSeconds", 0):
+                    from datetime import datetime, timedelta, timezone
+
+                    rs = int(getattr(ship.cooldown, "remainingSeconds", 0))
+                    when = datetime.now(timezone.utc) + timedelta(seconds=max(1, rs))
+                    rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                else:
+                    from datetime import datetime, timedelta, timezone
+
+                    when = datetime.now(timezone.utc) + timedelta(seconds=5)
+                    rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            except Exception:
+                pass
 
     def _probe_visit_market(self, ship_symbol: str) -> None:
         ship = self.data_warehouse.ships_by_symbol.get(ship_symbol)
