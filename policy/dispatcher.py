@@ -1,4 +1,5 @@
 import logging
+import math
 
 from data.enums import ShipAction, ShipRole
 from data.models.runtime import ShipRuntime, ShipState
@@ -109,32 +110,100 @@ class Dispatcher:
                         return ShipAction.PROBE_VISIT_MARKET
                 except Exception:
                     pass
-            # Mine if excavator and cargo not full
+            # Mine behavior for excavators: purge unsellable items; mine until full; then sell at known buyers.
             if ship.registration and ship.registration.role == ShipRole.EXCAVATOR:
+                # Helper: jettison goods that have no known buyers in cached market snapshots
+                def _jettison_unsellable() -> bool:
+                    try:
+                        cargo_payload = self.scanner.client.fleet.get_cargo(symbol)
+                        inventory = (
+                            (cargo_payload.get("data") or {}).get("inventory", [])
+                            if isinstance(cargo_payload, dict)
+                            else []
+                        )
+                        if not inventory:
+                            return False
+                        known_buyers: set[str] = set()
+                        for snapshot in self.warehouse.market_prices_by_waypoint.values():
+                            goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
+                            for g in goods:
+                                if not isinstance(g, dict):
+                                    continue
+                                if g.get("sellPrice", 0) and g.get("symbol"):
+                                    known_buyers.add(g.get("symbol"))
+                        did = False
+                        for item in inventory:
+                            gsym = item.get("symbol")
+                            units = item.get("units", 0)
+                            if not gsym or not units:
+                                continue
+                            if gsym not in known_buyers:
+                                try:
+                                    self.scanner.client.fleet.jettison(symbol, gsym, units)
+                                    did = True
+                                except Exception:
+                                    pass
+                        return did
+                    except Exception:
+                        return False
+
+                # If not full, purge unsellable items and keep mining
                 if ship.cargo and ship.cargo.units < ship.cargo.capacity:
+                    try:
+                        _jettison_unsellable()
+                    except Exception:
+                        pass
                     logging.debug(f"decide_next_action[{symbol}]: choosing NAVIGATE_TO_MINE")
                     return ShipAction.NAVIGATE_TO_MINE
-                # Cargo full -> prefer a market that buys current cargo; otherwise explore as before
+
+                # If full, pick nearest known buyer (from cached snapshots) and go sell; otherwise jettison unsellables and resume mining
                 if ship.cargo and ship.cargo.units >= ship.cargo.capacity:
                     try:
-                        # First, choose a known marketplace that can buy something we carry
-                        target = self.markets.find_best_marketplace_for_cargo(symbol)
-                        if not target:
-                            # Fall back to exploring (avoid duplicate targets)
-                            exclude = {
-                                r.context.get("target_market")
-                                for r in self.warehouse.runtime.values()
-                                if isinstance(r.context.get("target_market"), str)
-                            }
-                            target = self.markets.find_nearest_unvisited_marketplace(symbol, exclude=exclude)
-                            if not target:
-                                target = self.markets.find_nearest_marketplace(symbol, exclude=exclude)
-                        if target and rt is not None:
-                            rt.context["target_market"] = target
+                        cargo_payload = self.scanner.client.fleet.get_cargo(symbol)
+                        inventory = (
+                            (cargo_payload.get("data") or {}).get("inventory", [])
+                            if isinstance(cargo_payload, dict)
+                            else []
+                        )
+                        cargo_syms = {i.get("symbol") for i in inventory if isinstance(i, dict) and i.get("symbol")}
+
+                        def _dist(a_sym: str, b_sym: str) -> float:
+                            a = self.warehouse.waypoints_by_symbol.get(a_sym)
+                            b = self.warehouse.waypoints_by_symbol.get(b_sym)
+                            if not a or not b:
+                                return float("inf")
+                            dx = (a.x or 0) - (b.x or 0)
+                            dy = (a.y or 0) - (b.y or 0)
+                            return math.hypot(dx, dy)
+
+                        current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
+                        best_sym = None
+                        best_dist = None
+                        if current_wp and cargo_syms:
+                            for wp_sym, snapshot in self.warehouse.market_prices_by_waypoint.items():
+                                goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
+                                sellable = {
+                                    g.get("symbol") for g in goods if isinstance(g, dict) and g.get("sellPrice", 0) > 0
+                                }
+                                if not (sellable & cargo_syms):
+                                    continue
+                                d = _dist(current_wp, wp_sym)
+                                if best_dist is None or d < best_dist:
+                                    best_sym, best_dist = wp_sym, d
+                        if best_sym:
+                            rt.context["target_market"] = best_sym
                             logging.debug(
-                                f"decide_next_action[{symbol}]: cargo full, targeting PROBE_VISIT_MARKET -> {target}"
+                                f"decide_next_action[{symbol}]: cargo full, targeting PROBE_VISIT_MARKET -> {best_sym}"
                             )
                             return ShipAction.PROBE_VISIT_MARKET
+
+                        # No known buyers -> jettison unsellables and resume mining
+                        try:
+                            if _jettison_unsellable():
+                                logging.debug(f"decide_next_action[{symbol}]: jettisoned unsellables; resume mining")
+                                return ShipAction.NAVIGATE_TO_MINE
+                        except Exception:
+                            pass
                     except Exception:
                         pass
             return ShipAction.NOOP
