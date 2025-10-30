@@ -156,10 +156,110 @@ class ActionExecutor:
             logging.info(f"Probe target not set for {ship_symbol}; skipping.")
             return
         logging.info(f"Probe navigating to market: {target}")
-        if rt and ship and ship.nav and ship.nav.route is not None:
-            rt.state = ShipState.NAVIGATING
-            rt.context["destination"] = "PROBE_MARKET"
-        # Cross-system travel if needed
+        # If already at target and not in transit, perform market visit and optional selling
+        try:
+            nav_status = ship.nav.status if ship and ship.nav else None
+            at_target = bool(ship and ship.nav and ship.nav.waypointSymbol == target)
+            if nav_status != ShipNavStatus.IN_TRANSIT and at_target:
+                system_symbol = ship.nav.systemSymbol if ship and ship.nav else None
+                if system_symbol:
+                    market = self.client.waypoints.get_market(system_symbol, target)
+                    if market:
+                        self.data_warehouse.upsert_market_snapshot(system_symbol, market)
+                        goods = market.get("tradeGoods", []) if isinstance(market, dict) else []
+                        for good in goods:
+                            self.data_warehouse.record_good_observation(system_symbol, target, good)
+                        logging.info(f"Probe visited {target}; observed {len(goods)} goods")
+                        # Miners sell only in explicit selling mode; probes never sell
+                        try:
+                            role = ship.registration.role if ship and ship.registration else None
+                            is_miner_selling = bool(role == ShipRole.EXCAVATOR and rt and rt.context.get("selling"))
+                            if is_miner_selling and ship.cargo and ship.cargo.units > 0:
+                                ship = self.markets.dock_and_sell_all_cargo(ship_symbol, target)
+                                try:
+                                    cargo_payload = self.client.fleet.get_cargo(ship_symbol)
+                                    inventory = (
+                                        (cargo_payload.get("data") or {}).get("inventory", [])
+                                        if isinstance(cargo_payload, dict)
+                                        else []
+                                    )
+                                    total_units = sum(int(i.get("units", 0)) for i in inventory if isinstance(i, dict))
+                                    if total_units > 0 and rt:
+                                        cargo_syms = {
+                                            i.get("symbol")
+                                            for i in inventory
+                                            if isinstance(i, dict) and i.get("symbol")
+                                        }
+                                        current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
+                                        best_sym = None
+                                        best_dist = None
+                                        if current_wp and cargo_syms:
+                                            for (
+                                                wp_sym,
+                                                snapshot,
+                                            ) in self.data_warehouse.market_prices_by_waypoint.items():
+                                                goods2 = (
+                                                    snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
+                                                )
+                                                sellable = {
+                                                    g.get("symbol")
+                                                    for g in goods2
+                                                    if isinstance(g, dict) and g.get("sellPrice", 0) > 0
+                                                }
+                                                if not (sellable & cargo_syms):
+                                                    continue
+                                                d = self.navigator._waypoint_distance(current_wp, wp_sym)
+                                                if best_dist is None or d < best_dist:
+                                                    best_sym, best_dist = wp_sym, d
+                                        if best_sym:
+                                            rt.context["target_market"] = best_sym
+                                            rt.context["selling"] = True
+                                        else:
+                                            for item in inventory:
+                                                sym = item.get("symbol")
+                                                units = int(item.get("units", 0))
+                                                if sym and units > 0:
+                                                    try:
+                                                        self.navigator.jettison_cargo(ship_symbol, sym, units)
+                                                    except Exception:
+                                                        pass
+                                            ship = self.data_warehouse.ships_by_symbol.get(ship_symbol) or ship
+                                            if rt:
+                                                rt.context.pop("selling", None)
+                                                rt.context.pop("target_market", None)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                # Reset to IDLE for next hop; preserve selling/target when continuing
+                if rt:
+                    rt.state = ShipState.IDLE
+                    rt.context.pop("destination", None)
+                    if not rt.context.get("selling"):
+                        rt.context.pop("target_market", None)
+                return
+        except Exception as e:
+            logging.error(f"Probe market fetch failed at {target}: {e}")
+
+        # If in transit, just schedule next wakeup and return
+        try:
+            if ship and ship.nav and ship.nav.status == ShipNavStatus.IN_TRANSIT:
+                if rt:
+                    rt.state = ShipState.NAVIGATING
+                    rt.context["destination"] = "PROBE_MARKET"
+                    arrival = ship.nav.route.arrival if ship.nav and ship.nav.route else ""
+                    if isinstance(arrival, str) and arrival:
+                        rt.next_wakeup_ts = arrival
+                    else:
+                        from datetime import datetime, timedelta, timezone
+
+                        when = datetime.now(timezone.utc) + timedelta(seconds=10)
+                        rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                return
+        except Exception:
+            pass
+
+        # Cross-system travel if needed (non-blocking)
         try:
             target_system = "-".join(target.split("-")[:2]) if isinstance(target, str) else None
             current_system = ship.nav.systemSymbol if ship and ship.nav else None
@@ -168,10 +268,30 @@ class ActionExecutor:
                     ship = self.navigator.warp_to_system(ship_symbol, target_system)
                 except Exception:
                     ship = self.navigator.jump_to_system(ship_symbol, target_system)
-                ship = self.navigator.wait_until_arrival(ship_symbol)
+                # Schedule wakeup based on route arrival if available
+                ship = self.data_warehouse.ships_by_symbol.get(ship_symbol) or ship
+                if rt:
+                    rt.state = ShipState.NAVIGATING
+                    rt.context["destination"] = "PROBE_MARKET"
+                    try:
+                        arrival = ship.nav.route.arrival if ship and ship.nav and ship.nav.route else ""
+                        if isinstance(arrival, str) and arrival:
+                            rt.next_wakeup_ts = arrival
+                        else:
+                            from datetime import datetime, timedelta, timezone
+
+                            when = datetime.now(timezone.utc) + timedelta(seconds=10)
+                            rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    except Exception:
+                        from datetime import datetime, timedelta, timezone
+
+                        when = datetime.now(timezone.utc) + timedelta(seconds=10)
+                        rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                return
         except Exception as _e:
             logging.error(f"Cross-system navigation failed for {ship_symbol} -> {target}: {_e}")
-        # In-system travel and arrival (use robust navigation for selling; simple otherwise)
+
+        # In-system travel (non-blocking)
         role = ship.registration.role if ship and ship.registration else None
         is_miner_selling = bool(role == ShipRole.EXCAVATOR and rt and rt.context.get("selling"))
         if is_miner_selling:
@@ -197,8 +317,22 @@ class ActionExecutor:
                         return False
                     logging.info(f"Navigate error to {target_wp}: {err}")
                     return False
+                # Schedule wakeup after successful navigate
                 try:
-                    self.navigator.wait_until_arrival(ship_symbol)
+                    ship2 = self.data_warehouse.ships_by_symbol.get(ship_symbol) or self.navigator._refresh_ship(
+                        ship_symbol
+                    )
+                    if rt:
+                        rt.state = ShipState.NAVIGATING
+                        rt.context["destination"] = "PROBE_MARKET"
+                        arrival2 = ship2.nav.route.arrival if ship2 and ship2.nav and ship2.nav.route else ""
+                        if isinstance(arrival2, str) and arrival2:
+                            rt.next_wakeup_ts = arrival2
+                        else:
+                            from datetime import datetime, timedelta, timezone
+
+                            when = datetime.now(timezone.utc) + timedelta(seconds=10)
+                            rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 except Exception:
                     pass
                 return True
@@ -207,81 +341,25 @@ class ActionExecutor:
                 _attempt_to(target, ShipNavFlightMode.DRIFT)
             # Refresh local ship entry minimally
             ship = self.data_warehouse.ships_by_symbol.get(ship_symbol) or ship
+            return
         else:
             ship = self.navigator.navigate_in_system(ship_symbol, target)
-            ship = self.navigator.wait_until_arrival(ship_symbol)
-        # Fetch and upsert market snapshot
-        try:
-            system_symbol = ship.nav.systemSymbol if ship and ship.nav else None
-            if system_symbol:
-                market = self.client.waypoints.get_market(system_symbol, target)
-                if market:
-                    self.data_warehouse.upsert_market_snapshot(system_symbol, market)
-                    goods = market.get("tradeGoods", []) if isinstance(market, dict) else []
-                    for good in goods:
-                        self.data_warehouse.record_good_observation(system_symbol, target, good)
-                    logging.info(f"Probe visited {target}; observed {len(goods)} goods")
-                    # Miners sell only in explicit selling mode; probes never sell
-                    try:
-                        role = ship.registration.role if ship and ship.registration else None
-                        is_miner_selling = bool(role == ShipRole.EXCAVATOR and rt and rt.context.get("selling"))
-                        if is_miner_selling and ship.cargo and ship.cargo.units > 0:
-                            ship = self.markets.dock_and_sell_all_cargo(ship_symbol, target)
-                            try:
-                                cargo_payload = self.client.fleet.get_cargo(ship_symbol)
-                                inventory = (
-                                    (cargo_payload.get("data") or {}).get("inventory", [])
-                                    if isinstance(cargo_payload, dict)
-                                    else []
-                                )
-                                total_units = sum(int(i.get("units", 0)) for i in inventory if isinstance(i, dict))
-                                if total_units > 0 and rt:
-                                    cargo_syms = {
-                                        i.get("symbol") for i in inventory if isinstance(i, dict) and i.get("symbol")
-                                    }
-                                    current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
-                                    best_sym = None
-                                    best_dist = None
-                                    if current_wp and cargo_syms:
-                                        for wp_sym, snapshot in self.data_warehouse.market_prices_by_waypoint.items():
-                                            goods2 = (
-                                                snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
-                                            )
-                                            sellable = {
-                                                g.get("symbol")
-                                                for g in goods2
-                                                if isinstance(g, dict) and g.get("sellPrice", 0) > 0
-                                            }
-                                            if not (sellable & cargo_syms):
-                                                continue
-                                            d = self.navigator._waypoint_distance(current_wp, wp_sym)
-                                            if best_dist is None or d < best_dist:
-                                                best_sym, best_dist = wp_sym, d
-                                    if best_sym:
-                                        rt.context["target_market"] = best_sym
-                                        rt.context["selling"] = True
-                                    else:
-                                        for item in inventory:
-                                            sym = item.get("symbol")
-                                            units = int(item.get("units", 0))
-                                            if sym and units > 0:
-                                                try:
-                                                    self.navigator.jettison_cargo(ship_symbol, sym, units)
-                                                except Exception:
-                                                    pass
-                                        ship = self.data_warehouse.ships_by_symbol.get(ship_symbol) or ship
-                                        if rt:
-                                            rt.context.pop("selling", None)
-                                            rt.context.pop("target_market", None)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-        except Exception as e:
-            logging.error(f"Probe market fetch failed at {target}: {e}")
-        # Reset to IDLE for next hop; preserve selling/target when continuing
-        if rt:
-            rt.state = ShipState.IDLE
-            rt.context.pop("destination", None)
-            if not rt.context.get("selling"):
-                rt.context.pop("target_market", None)
+            # Schedule wakeup and return immediately
+            if rt:
+                rt.state = ShipState.NAVIGATING
+                rt.context["destination"] = "PROBE_MARKET"
+                try:
+                    arrival = ship.nav.route.arrival if ship and ship.nav and ship.nav.route else ""
+                    if isinstance(arrival, str) and arrival:
+                        rt.next_wakeup_ts = arrival
+                    else:
+                        from datetime import datetime, timedelta, timezone
+
+                        when = datetime.now(timezone.utc) + timedelta(seconds=10)
+                        rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                except Exception:
+                    from datetime import datetime, timedelta, timezone
+
+                    when = datetime.now(timezone.utc) + timedelta(seconds=10)
+                    rt.next_wakeup_ts = when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            return
