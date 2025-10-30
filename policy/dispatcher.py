@@ -114,21 +114,25 @@ class Dispatcher:
                 if ship.cargo and ship.cargo.units < ship.cargo.capacity:
                     logging.debug(f"decide_next_action[{symbol}]: choosing NAVIGATE_TO_MINE")
                     return ShipAction.NAVIGATE_TO_MINE
-                # Cargo full -> explore nearby market to reveal prices (avoid duplicates)
+                # Cargo full -> prefer a market that buys current cargo; otherwise explore as before
                 if ship.cargo and ship.cargo.units >= ship.cargo.capacity:
                     try:
-                        exclude = {
-                            r.context.get("target_market")
-                            for r in self.warehouse.runtime.values()
-                            if isinstance(r.context.get("target_market"), str)
-                        }
-                        target = self.markets.find_nearest_unvisited_marketplace(symbol, exclude=exclude)
+                        # First, choose a known marketplace that can buy something we carry
+                        target = self.markets.find_best_marketplace_for_cargo(symbol)
                         if not target:
-                            target = self.markets.find_nearest_marketplace(symbol, exclude=exclude)
+                            # Fall back to exploring (avoid duplicate targets)
+                            exclude = {
+                                r.context.get("target_market")
+                                for r in self.warehouse.runtime.values()
+                                if isinstance(r.context.get("target_market"), str)
+                            }
+                            target = self.markets.find_nearest_unvisited_marketplace(symbol, exclude=exclude)
+                            if not target:
+                                target = self.markets.find_nearest_marketplace(symbol, exclude=exclude)
                         if target and rt is not None:
                             rt.context["target_market"] = target
                             logging.debug(
-                                f"decide_next_action[{symbol}]: cargo full, exploring PROBE_VISIT_MARKET -> {target}"
+                                f"decide_next_action[{symbol}]: cargo full, targeting PROBE_VISIT_MARKET -> {target}"
                             )
                             return ShipAction.PROBE_VISIT_MARKET
                     except Exception:

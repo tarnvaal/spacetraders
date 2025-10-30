@@ -165,6 +165,18 @@ while True:
             if rt and ship and ship.nav and ship.nav.route is not None:
                 rt.state = ShipState.NAVIGATING
                 rt.context["destination"] = "PROBE_MARKET"
+            # If target is in a different system, attempt cross-system travel first
+            try:
+                target_system = "-".join(target.split("-")[:2]) if isinstance(target, str) else None
+                current_system = ship.nav.systemSymbol if ship and ship.nav else None
+                if target_system and current_system and target_system != current_system:
+                    try:
+                        ship = navigator.warp_to_system(ship.symbol, target_system)
+                    except Exception:
+                        ship = navigator.jump_to_system(ship.symbol, target_system)
+                    ship = navigator.wait_until_arrival(ship.symbol)
+            except Exception as _e:
+                logging.error(f"Cross-system navigation failed for {ship.symbol} -> {target}: {_e}")
             ship = navigator.navigate_in_system(ship.symbol, target)
             ship = navigator.wait_until_arrival(ship.symbol)
             # Upon arrival, fetch and upsert market snapshot (triggers INFO price logs)

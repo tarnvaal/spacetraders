@@ -146,7 +146,18 @@ class Markets(Navigation):
             best_sym, best_dist = unvisited[0]
             return best_sym
 
-        # Last resort: nearest marketplace
+        # Cross-system fallback: choose any known marketplace snapshot that buys at least
+        # one item in current cargo (across all systems). Prefer the first match.
+        try:
+            for sym, snapshot in self.warehouse.market_prices_by_waypoint.items():
+                goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
+                sellable = {g.get("symbol") for g in goods if g.get("symbol") and g.get("sellPrice", 0) > 0}
+                if sellable & cargo_syms:
+                    return sym
+        except Exception:
+            pass
+
+        # Last resort: nearest marketplace (current system)
         return self.find_nearest_marketplace(ship_symbol)
 
     def find_nearest_unvisited_marketplace(self, ship_symbol: str, exclude: set[str] | None = None) -> str | None:
@@ -191,6 +202,21 @@ class Markets(Navigation):
         inventory = (cargo_payload.get("data") or {}).get("inventory", []) if isinstance(cargo_payload, dict) else []
         if not inventory:
             pass
+        # If none of the current cargo can be sold at this market, log explicitly and exit early
+        try:
+            cargo_syms = {i.get("symbol") for i in inventory if isinstance(i, dict) and i.get("symbol")}
+        except Exception:
+            cargo_syms = set()
+        if sellable.isdisjoint(cargo_syms):
+            try:
+                logging.info(
+                    f"No buyers for cargo at {market_wp_symbol}. Cargo={sorted(cargo_syms)} SellableHere={sorted(sellable)}"
+                )
+            except Exception:
+                pass
+            # Ensure we leave cleanly (refuel/orbit handled below) and return
+            ship = self._ensure_orbit(ship_symbol)
+            return ship
         total_credits = 0
         for item in list(inventory):
             sym = item.get("symbol")
