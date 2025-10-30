@@ -31,7 +31,29 @@ class Navigation:
         if flight_mode is not None:
             self._maybe_set_flight_mode(ship_symbol, flight_mode)
         self.client.fleet.navigate_ship(ship_symbol, waypoint_symbol)
-        return self._refresh_ship(ship_symbol)
+        ship = self._refresh_ship(ship_symbol)
+        try:
+            arrival = ship.nav.route.arrival if ship and ship.nav and ship.nav.route else ""
+            status = ship.nav.status if ship and ship.nav else None
+            current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
+            dest_wp = (
+                ship.nav.route.destination.symbol
+                if ship and ship.nav and ship.nav.route and ship.nav.route.destination
+                else None
+            )
+            from_wp = (
+                ship.nav.route.departure.symbol
+                if ship and ship.nav and ship.nav.route and ship.nav.route.departure
+                else None
+            )
+            import logging
+
+            logging.debug(
+                f"navigate_in_system[{ship_symbol}]: from={from_wp} to={dest_wp} now_at={current_wp} status={status} arrival={arrival}"
+            )
+        except Exception:
+            pass
+        return ship
 
     def jump_to_system(self, ship_symbol: str, system_symbol: str):
         """
@@ -145,7 +167,14 @@ class Navigation:
         self._ensure_orbit(ship_symbol)
         resp = self.client.fleet.extract(ship_symbol)
         # Optionally refresh cargo state
-        self._refresh_ship(ship_symbol)
+        ship = self._refresh_ship(ship_symbol)
+        try:
+            import logging
+
+            cooldown = ship.cooldown.expiration if ship and ship.cooldown else ""
+            logging.debug(f"extract_at_current_waypoint[{ship_symbol}]: cooldown.expiration={cooldown}")
+        except Exception:
+            pass
         return resp
 
     def jettison_cargo(self, ship_symbol: str, symbol: str, units: int):
@@ -167,7 +196,14 @@ class Navigation:
         units = ship.fuel.capacity - ship.fuel.current
         if units > 0:
             self.client.fleet.refuel_ship(ship_symbol, units=units, from_cargo=True)
-        return self._refresh_ship(ship_symbol)
+        ship = self._refresh_ship(ship_symbol)
+        try:
+            import logging
+
+            logging.debug(f"refuel[{ship_symbol}]: fuel now {ship.fuel.current}/{ship.fuel.capacity}")
+        except Exception:
+            pass
+        return ship
 
     # Mining helpers removed
 

@@ -1,5 +1,8 @@
+import logging
+
 from api.client import ApiClient
 from data.enums import WaypointTraitType
+from data.storage import get_storage
 from data.warehouse import Warehouse
 
 from .navigation import Navigation
@@ -22,6 +25,7 @@ class Markets(Navigation):
             import time
 
             tx = (resp.get("data") or {}).get("transaction") if isinstance(resp, dict) else None
+            agent_after = (resp.get("data") or {}).get("agent") if isinstance(resp, dict) else None
             if isinstance(tx, dict):
                 price_per_unit = tx.get("pricePerUnit")
                 total_price = tx.get("totalPrice")
@@ -36,11 +40,34 @@ class Markets(Navigation):
                     f.write(
                         f"{ts}\tBUY\t{ship_symbol}\t{ship.nav.waypointSymbol}\tFUEL\t{purchased_units}\t{price_per_unit}\t{total_price}\n"
                     )
+                # Update credits in warehouse if present
+                try:
+                    if isinstance(agent_after, dict) and agent_after.get("credits") is not None:
+                        self.warehouse.credits = int(agent_after.get("credits"))
+                except Exception:
+                    pass
+                # Persist transaction in SQLite
+                try:
+                    credits_after = agent_after.get("credits") if isinstance(agent_after, dict) else None
+                    storage = get_storage()
+                    storage.insert_transaction(
+                        ts=ts,
+                        ship=ship_symbol,
+                        waypoint=ship.nav.waypointSymbol,
+                        action="BUY",
+                        symbol="FUEL",
+                        units=purchased_units,
+                        unit_price=price_per_unit,
+                        total_price=total_price,
+                        credits_after=credits_after,
+                    )
+                except Exception:
+                    pass
         except Exception:
             pass
         return self._refresh_ship(ship_symbol)
 
-    def find_nearest_marketplace(self, ship_symbol: str) -> str:
+    def find_nearest_marketplace(self, ship_symbol: str, exclude: set[str] | None = None) -> str:
         ship = self._refresh_ship(ship_symbol)
         system_symbol = ship.nav.systemSymbol
         current_wp = ship.nav.waypointSymbol
@@ -53,6 +80,8 @@ class Markets(Navigation):
         for p in payloads:
             sym = p.get("symbol")
             if not sym:
+                continue
+            if exclude and sym in exclude:
                 continue
             dist = self._waypoint_distance(current_wp, sym)
             if best_dist is None or dist < best_dist:
@@ -120,7 +149,7 @@ class Markets(Navigation):
         # Last resort: nearest marketplace
         return self.find_nearest_marketplace(ship_symbol)
 
-    def find_nearest_unvisited_marketplace(self, ship_symbol: str) -> str | None:
+    def find_nearest_unvisited_marketplace(self, ship_symbol: str, exclude: set[str] | None = None) -> str | None:
         ship = self._refresh_ship(ship_symbol)
         system_symbol = ship.nav.systemSymbol
         current_wp = ship.nav.waypointSymbol
@@ -133,6 +162,8 @@ class Markets(Navigation):
         for p in payloads:
             sym = p.get("symbol")
             if not sym or sym in self.warehouse.market_prices_by_waypoint:
+                continue
+            if exclude and sym in exclude:
                 continue
             dist = self._waypoint_distance(current_wp, sym)
             if best_dist is None or dist < best_dist:
@@ -171,11 +202,49 @@ class Markets(Navigation):
             tx = self.client.fleet.sell(ship_symbol, sym, units)
             if isinstance(tx, dict) and tx.get("error"):
                 continue
-            transaction = (tx.get("data") or {}).get("transaction") if isinstance(tx, dict) else None
+            data_obj = tx.get("data") if isinstance(tx, dict) else None
+            transaction = data_obj.get("transaction") if isinstance(data_obj, dict) else None
+            agent_after = data_obj.get("agent") if isinstance(data_obj, dict) else None
             total_price = transaction.get("totalPrice") if isinstance(transaction, dict) else None
             price_per_unit = transaction.get("pricePerUnit") if isinstance(transaction, dict) else None
+            credits_after = agent_after.get("credits") if isinstance(agent_after, dict) else None
             if total_price is not None:
                 total_credits += total_price
+                # Console log sale details
+                try:
+                    wp = ship.nav.waypointSymbol if ship and ship.nav else market_wp_symbol
+                    if credits_after is not None:
+                        # Sync warehouse credits when provided
+                        try:
+                            self.warehouse.credits = int(credits_after)
+                        except Exception:
+                            pass
+                        logging.info(
+                            f"Sold {units}x {sym} at {wp}: unit={price_per_unit} total={total_price} credits={credits_after}"
+                        )
+                    else:
+                        logging.info(f"Sold {units}x {sym} at {wp}: unit={price_per_unit} total={total_price}")
+                except Exception:
+                    pass
+            # Persist transaction in SQLite
+            try:
+                import time as _t
+
+                ts = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime())
+                storage = get_storage()
+                storage.insert_transaction(
+                    ts=ts,
+                    ship=ship_symbol,
+                    waypoint=ship.nav.waypointSymbol if ship and ship.nav else market_wp_symbol,
+                    action="SELL",
+                    symbol=sym,
+                    units=units,
+                    unit_price=price_per_unit,
+                    total_price=total_price,
+                    credits_after=credits_after,
+                )
+            except Exception:
+                pass
                 # append SELL log line
                 try:
                     import os

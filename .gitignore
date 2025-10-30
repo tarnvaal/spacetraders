@@ -75,3 +75,6 @@ openapitools.json
 
 # Local config (do not commit environment-specific config)
 config.ini
+data/markets.db-shm
+data/markets.db-wal
+data/markets.db-shm
