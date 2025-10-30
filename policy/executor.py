@@ -105,12 +105,12 @@ class ActionExecutor:
                 pass
             return False
 
-        # Try reachable targets with BURN
+        # Try reachable targets with CRUISE (default)
         for tgt in candidates:
-            if attempt(tgt, ShipNavFlightMode.BURN):
+            if attempt(tgt, ShipNavFlightMode.CRUISE):
                 return
 
-        # No BURN target reachable: drift to best (closest)
+        # No CRUISE target reachable: drift to best (closest)
         if candidates:
             if attempt(candidates[0], ShipNavFlightMode.DRIFT):
                 return
@@ -171,9 +171,45 @@ class ActionExecutor:
                 ship = self.navigator.wait_until_arrival(ship_symbol)
         except Exception as _e:
             logging.error(f"Cross-system navigation failed for {ship_symbol} -> {target}: {_e}")
-        # In-system travel and arrival
-        ship = self.navigator.navigate_in_system(ship_symbol, target)
-        ship = self.navigator.wait_until_arrival(ship_symbol)
+        # In-system travel and arrival (use robust navigation for selling; simple otherwise)
+        role = ship.registration.role if ship and ship.registration else None
+        is_miner_selling = bool(role == ShipRole.EXCAVATOR and rt and rt.context.get("selling"))
+        if is_miner_selling:
+            # Attempt CRUISE then DRIFT on error 4203
+            def _attempt_to(target_wp: str, mode: ShipNavFlightMode) -> bool:
+                try:
+                    self.navigator._ensure_orbit(ship_symbol)
+                except Exception:
+                    pass
+                try:
+                    self.navigator._maybe_set_flight_mode(ship_symbol, mode)
+                except Exception:
+                    pass
+                resp = self.client.fleet.navigate_ship(ship_symbol, target_wp)
+                if isinstance(resp, dict) and resp.get("error"):
+                    err = resp.get("error") or {}
+                    code = err.get("code")
+                    if code == 4203:
+                        data = err.get("data") or {}
+                        logging.info(
+                            f"Insufficient fuel for {mode.name} to {target_wp}: required={data.get('fuelRequired')} available={data.get('fuelAvailable')}"
+                        )
+                        return False
+                    logging.info(f"Navigate error to {target_wp}: {err}")
+                    return False
+                try:
+                    self.navigator.wait_until_arrival(ship_symbol)
+                except Exception:
+                    pass
+                return True
+
+            if not _attempt_to(target, ShipNavFlightMode.CRUISE):
+                _attempt_to(target, ShipNavFlightMode.DRIFT)
+            # Refresh local ship entry minimally
+            ship = self.data_warehouse.ships_by_symbol.get(ship_symbol) or ship
+        else:
+            ship = self.navigator.navigate_in_system(ship_symbol, target)
+            ship = self.navigator.wait_until_arrival(ship_symbol)
         # Fetch and upsert market snapshot
         try:
             system_symbol = ship.nav.systemSymbol if ship and ship.nav else None
