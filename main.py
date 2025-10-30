@@ -195,15 +195,76 @@ while True:
                             if ship.registration and ship.registration.role == ShipRole.EXCAVATOR:
                                 if ship.cargo and ship.cargo.units > 0:
                                     ship = markets.dock_and_sell_all_cargo(ship.symbol, target)
+                                    # After selling at this market, continue selling until empty; jettison leftovers if no known buyers
+                                    rt = dataWarehouse.runtime.get(ship.symbol)
+                                    try:
+                                        cargo_payload = client.fleet.get_cargo(ship.symbol)
+                                        inventory = (
+                                            (cargo_payload.get("data") or {}).get("inventory", [])
+                                            if isinstance(cargo_payload, dict)
+                                            else []
+                                        )
+                                        total_units = sum(
+                                            int(i.get("units", 0)) for i in inventory if isinstance(i, dict)
+                                        )
+                                        if total_units > 0 and rt:
+                                            cargo_syms = {
+                                                i.get("symbol")
+                                                for i in inventory
+                                                if isinstance(i, dict) and i.get("symbol")
+                                            }
+                                            # Choose nearest known buyer from cached snapshots
+                                            current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
+                                            best_sym = None
+                                            best_dist = None
+                                            if current_wp and cargo_syms:
+                                                for wp_sym, snapshot in dataWarehouse.market_prices_by_waypoint.items():
+                                                    goods2 = (
+                                                        snapshot.get("tradeGoods", [])
+                                                        if isinstance(snapshot, dict)
+                                                        else []
+                                                    )
+                                                    sellable = {
+                                                        g.get("symbol")
+                                                        for g in goods2
+                                                        if isinstance(g, dict) and g.get("sellPrice", 0) > 0
+                                                    }
+                                                    if not (sellable & cargo_syms):
+                                                        continue
+                                                    d = navigator._waypoint_distance(current_wp, wp_sym)
+                                                    if best_dist is None or d < best_dist:
+                                                        best_sym, best_dist = wp_sym, d
+                                            if best_sym:
+                                                rt.context["target_market"] = best_sym
+                                                rt.context["selling"] = True
+                                            else:
+                                                # No known buyers -> jettison everything remaining here
+                                                for item in inventory:
+                                                    sym = item.get("symbol")
+                                                    units = int(item.get("units", 0))
+                                                    if sym and units > 0:
+                                                        try:
+                                                            navigator.jettison_cargo(ship.symbol, sym, units)
+                                                        except Exception:
+                                                            pass
+                                                # Refresh local ship entry minimally
+                                                ship = dataWarehouse.ships_by_symbol.get(ship.symbol) or ship
+                                                if rt:
+                                                    rt.context.pop("selling", None)
+                                                    rt.context.pop("target_market", None)
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
             except Exception as e:
                 logging.error(f"Probe market fetch failed at {target}: {e}")
-            # Reset to IDLE for next hop
+            # Reset to IDLE for next hop; preserve selling/target when continuing
             if rt:
                 rt.state = ShipState.IDLE
-                rt.context.pop("target_market", None)
                 rt.context.pop("destination", None)
+                # If not in selling mode, clear any stray target
+                if not rt.context.get("selling"):
+                    rt.context.pop("target_market", None)
     # Always re-queue after one action (or no-op)
     # add ship back to the event queue
     readiness = dispatcher.shipReadiness(ship.symbol)

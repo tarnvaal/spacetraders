@@ -110,8 +110,59 @@ class Dispatcher:
                         return ShipAction.PROBE_VISIT_MARKET
                 except Exception:
                     pass
-            # Mine behavior for excavators: purge unsellable items; mine until full; then sell at known buyers.
+            # Mine behavior for excavators: if in selling mode, continue selling until empty; otherwise mine until full then sell.
             if ship.registration and ship.registration.role == ShipRole.EXCAVATOR:
+                # Continue selling loop if flagged
+                if rt.context.get("selling"):
+                    if ship.cargo and ship.cargo.units > 0:
+                        # If a target is already assigned, keep heading there
+                        target = rt.context.get("target_market")
+                        if isinstance(target, str) and target:
+                            logging.debug(f"decide_next_action[{symbol}]: selling mode active, heading to {target}")
+                            return ShipAction.PROBE_VISIT_MARKET
+                        # Otherwise, choose next known buyer based on cached snapshots
+                        try:
+                            cargo_payload = self.scanner.client.fleet.get_cargo(symbol)
+                            inventory = (
+                                (cargo_payload.get("data") or {}).get("inventory", [])
+                                if isinstance(cargo_payload, dict)
+                                else []
+                            )
+                            cargo_syms = {i.get("symbol") for i in inventory if isinstance(i, dict) and i.get("symbol")}
+                            # Find nearest cached buyer
+                            current_wp = ship.nav.waypointSymbol if ship and ship.nav else None
+                            best_sym = None
+                            best_dist = None
+                            if current_wp and cargo_syms:
+                                for wp_sym, snapshot in self.warehouse.market_prices_by_waypoint.items():
+                                    goods = snapshot.get("tradeGoods", []) if isinstance(snapshot, dict) else []
+                                    sellable = {
+                                        g.get("symbol")
+                                        for g in goods
+                                        if isinstance(g, dict) and g.get("sellPrice", 0) > 0
+                                    }
+                                    if not (sellable & cargo_syms):
+                                        continue
+                                    d = self.markets._waypoint_distance(current_wp, wp_sym)
+                                    if best_dist is None or d < best_dist:
+                                        best_sym, best_dist = wp_sym, d
+                            if best_sym:
+                                rt.context["target_market"] = best_sym
+                                logging.debug(f"decide_next_action[{symbol}]: selling mode, targeting {best_sym}")
+                                return ShipAction.PROBE_VISIT_MARKET
+                        except Exception:
+                            pass
+                        # No known buyers for remaining cargo; mining loop will jettison leftovers at sell site
+                        logging.debug(
+                            f"decide_next_action[{symbol}]: selling mode but no known buyers; resume mining after cleanup"
+                        )
+                        return ShipAction.NAVIGATE_TO_MINE
+                    # Empty -> exit selling mode
+                    rt.context.pop("selling", None)
+                    rt.context.pop("target_market", None)
+                    logging.debug(f"decide_next_action[{symbol}]: selling complete; resume mining")
+                    return ShipAction.NAVIGATE_TO_MINE
+
                 # Helper: jettison goods that have no known buyers in cached market snapshots
                 def _jettison_unsellable() -> bool:
                     try:
@@ -192,6 +243,7 @@ class Dispatcher:
                                     best_sym, best_dist = wp_sym, d
                         if best_sym:
                             rt.context["target_market"] = best_sym
+                            rt.context["selling"] = True
                             logging.debug(
                                 f"decide_next_action[{symbol}]: cargo full, targeting PROBE_VISIT_MARKET -> {best_sym}"
                             )
