@@ -1,4 +1,5 @@
 import logging
+import math
 
 from api.client import ApiClient
 from data.enums import ShipAction, ShipNavFlightMode, ShipNavStatus, ShipRole
@@ -58,6 +59,19 @@ class ActionExecutor:
         logging.info(f"Mineable candidates (closest first): {candidates[:5]}{'...' if len(candidates)>5 else ''}")
         rt = self.data_warehouse.runtime.get(ship_symbol)
 
+        # Helper: compute distance from current waypoint to target using warehouse data
+        def _distance_to(target_wp: str) -> float:
+            try:
+                ship_cur = self.data_warehouse.ships_by_symbol.get(ship_symbol) or self.navigator._refresh_ship(
+                    ship_symbol
+                )
+                current_wp = ship_cur.nav.waypointSymbol if ship_cur and ship_cur.nav else None
+                if not current_wp:
+                    return float("inf")
+                return self.navigator._waypoint_distance(current_wp, target_wp)
+            except Exception:
+                return float("inf")
+
         def attempt(target: str, mode: ShipNavFlightMode) -> bool:
             # Ensure orbit and set flight mode
             try:
@@ -105,15 +119,81 @@ class ActionExecutor:
                 pass
             return False
 
-        # Try reachable targets with CRUISE (default)
+        # Prefer CRUISE only if we can afford it per datastore distance
+        try:
+            ship = self.data_warehouse.ships_by_symbol.get(ship_symbol) or self.navigator._refresh_ship(ship_symbol)
+            fuel_avail = int(getattr(getattr(ship, "fuel", None), "current", 0) or 0)
+        except Exception:
+            fuel_avail = 0
+
+        # Choose the first candidate that is CRUISE-reachable by simple distance heuristic
+        cruise_target: str | None = None
         for tgt in candidates:
-            if attempt(tgt, ShipNavFlightMode.CRUISE):
+            d = _distance_to(tgt)
+            if isinstance(d, int | float) and d != float("inf") and math.ceil(d) <= fuel_avail:
+                cruise_target = tgt
+                break
+
+        if cruise_target:
+            if attempt(cruise_target, ShipNavFlightMode.CRUISE):
                 return
 
         # No CRUISE target reachable: drift to best (closest)
         if candidates:
             if attempt(candidates[0], ShipNavFlightMode.DRIFT):
                 return
+
+        # Redirect to nearest refuel-capable waypoint (MARKETPLACE)
+        try:
+            refuel_wp = self.navigator_algorithms.find_closest_refuel_waypoint(ship_symbol)
+        except Exception:
+            refuel_wp = None
+
+        if isinstance(refuel_wp, str) and refuel_wp:
+            d_ref = _distance_to(refuel_wp)
+            mode_ref = (
+                ShipNavFlightMode.CRUISE
+                if isinstance(d_ref, int | float) and d_ref != float("inf") and math.ceil(d_ref) <= fuel_avail
+                else ShipNavFlightMode.DRIFT
+            )
+            # Inline navigate for refuel without setting MINE context
+            try:
+                self.navigator._ensure_orbit(ship_symbol)
+            except Exception:
+                pass
+            try:
+                self.navigator._maybe_set_flight_mode(ship_symbol, mode_ref)
+            except Exception:
+                pass
+            resp2 = self.client.fleet.navigate_ship(ship_symbol, refuel_wp)
+            if isinstance(resp2, dict) and resp2.get("error"):
+                err2 = resp2.get("error") or {}
+                code2 = err2.get("code")
+                if code2 == 4203:
+                    data2 = err2.get("data") or {}
+                    logging.info(
+                        f"Insufficient fuel for {mode_ref.name} to {refuel_wp}: required={data2.get('fuelRequired')} available={data2.get('fuelAvailable')}"
+                    )
+                else:
+                    logging.info(f"Navigate error to {refuel_wp}: {err2}")
+            else:
+                try:
+                    ship3 = self.data_warehouse.ships_by_symbol.get(ship_symbol) or self.navigator._refresh_ship(
+                        ship_symbol
+                    )
+                    in_transit3 = ship3.nav.status == ShipNavStatus.IN_TRANSIT if ship3 and ship3.nav else False
+                    dest3 = (
+                        ship3.nav.route.destination.symbol
+                        if ship3 and ship3.nav and ship3.nav.route and ship3.nav.route.destination
+                        else None
+                    )
+                    if rt and in_transit3 and dest3 == refuel_wp:
+                        rt.state = ShipState.NAVIGATING
+                        rt.context["destination"] = "REFUEL"
+                        logging.info(f"Navigating to refuel at {refuel_wp} via {mode_ref.name}")
+                        return
+                except Exception:
+                    pass
 
         # Backoff if all attempts failed
         if rt:
